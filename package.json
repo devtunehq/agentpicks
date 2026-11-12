@@ -1,0 +1,65 @@
+{
+  "name": "@devtune/agentpicks",
+  "version": "0.1.0",
+  "description": "The open Agent Picks runner: the agentpicks CLI, which tests the coding agents installed on your machine in fresh Docker containers, and the sandbox code DevTune runs its managed tests on",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/devtunehq/devtuneai.git",
+    "directory": "packages/agentpicks"
+  },
+  "bin": {
+    "agentpicks": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "docker",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": "./src/index.ts",
+    "./sandbox/docker": "./src/sandbox/docker.ts"
+  },
+  "scripts": {
+    "build:cli": "node scripts/build.mjs",
+    "clean": "git clean -xdf .turbo node_modules",
+    "format": "oxfmt --check \"**/*.{ts,tsx}\"",
+    "format:fix": "oxfmt --write \"**/*.{ts,tsx}\"",
+    "lint": "oxlint src",
+    "prepack": "pnpm build:cli",
+    "test": "vitest",
+    "test:run": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "typecheck": "kit-tsc --noEmit"
+  },
+  "dependencies": {
+    "jsonc-parser": "3.3.1",
+    "re2js": "2.8.7",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@kit/tsconfig": "workspace:*",
+    "@types/node": "catalog:",
+    "esbuild": "0.28.1",
+    "typescript5": "npm:typescript@5.9.3",
+    "vitest": "^4.0.0"
+  },
+  "typesVersions": {
+    "*": {
+      "*": [
+        "src/*"
+      ]
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "exports": {
+      "./package.json": "./package.json"
+    },
+    "typesVersions": {}
+  }
+}
