@@ -6,41 +6,9 @@
  */
 import { join } from 'node:path';
 
-import type { VersionedAgent } from '../run/agent-version';
 import { AgentSelectionError, UnsupportedAgentError } from './errors';
 import { parseVersion, readJsonObject, stringField, type HostIo } from './host';
-
-export interface SelfRunAgent {
-  kind: VersionedAgent;
-  name: string;
-  /** The command it installs on PATH. */
-  command: string;
-  /** What `--agent` accepts for it. */
-  aliases: string[];
-}
-
-/** The agents a self-run can launch, in the order they are listed. */
-export const SELF_RUN_AGENTS: SelfRunAgent[] = [
-  {
-    kind: 'claude_code',
-    name: 'Claude Code',
-    command: 'claude',
-    aliases: ['claude-code', 'claude', 'claude_code'],
-  },
-  {
-    kind: 'codex',
-    name: 'Codex',
-    command: 'codex',
-    aliases: ['codex'],
-  },
-  {
-    kind: 'opencode',
-    name: 'OpenCode',
-    command: 'opencode',
-    aliases: ['opencode'],
-  },
-  { kind: 'pi', name: 'Pi', command: 'pi', aliases: ['pi'] },
-];
+import { SELF_RUN_AGENTS, type SelfRunAgent } from './self-run-agents';
 
 /** Agents a self-run refuses by name, and why. */
 const REFUSED = [

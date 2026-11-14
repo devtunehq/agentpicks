@@ -360,6 +360,24 @@ function readBlobs(
   return blobs;
 }
 
+/**
+ * The remote of the repository containing `root`, as `readRepository` records it; null outside a
+ * repository, without git, or with no remote read with confidence. `init` names the customer's
+ * tool from it.
+ */
+export function repositoryRemote(root: string): string | null {
+  try {
+    return readRemoteUrl(hostGit(findGitDir(resolve(root))));
+  } catch (error) {
+    if (
+      error instanceof NotARepositoryError ||
+      error instanceof UnsupportedGitError
+    )
+      return null;
+    throw error;
+  }
+}
+
 function readRemoteUrl(git: Git): string | null {
   const remotes = git(['remote']).stdout.toString().split('\n').filter(Boolean);
   const remote = remotes.includes('origin') ? 'origin' : remotes[0];

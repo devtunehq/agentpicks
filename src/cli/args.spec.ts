@@ -35,6 +35,7 @@ describe('parseRunArgs', () => {
       agent: undefined,
       model: undefined,
       out: DEFAULT_OUT_DIR,
+      upload: true,
     });
     expect(
       parseRunArgs([
@@ -44,12 +45,14 @@ describe('parseRunArgs', () => {
         '--agent=codex',
         '--model=gpt-6',
         '--out=/tmp/runs',
+        '--no-upload',
       ]),
     ).toMatchObject({
       runs: 3,
       agent: 'codex',
       model: 'gpt-6',
       out: '/tmp/runs',
+      upload: false,
     });
   });
 

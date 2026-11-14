@@ -1,6 +1,6 @@
 /**
  * ABOUTME: Bundles the agentpicks CLI into one runnable CommonJS file, dist/cli.js, with its
- * dependencies inlined, and marks it executable.
+ * dependencies inlined except the native file-lock addon, and marks it executable.
  */
 import { chmod } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,8 @@ await build({
   // Prefer a package's ES module build: jsonc-parser's `main` is a UMD build whose requires
   // esbuild cannot follow.
   mainFields: ['module', 'main'],
+  // A native addon can't be inlined; npm installs it beside the CLI as a dependency.
+  external: ['fs-native-extensions'],
   outfile,
   banner: { js: '#!/usr/bin/env node' },
   legalComments: 'linked',

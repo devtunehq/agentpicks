@@ -3,8 +3,8 @@
  * interface, the scripts a run uploads into the sandbox, each agent's launch, the run lifecycle,
  * the committed starters, the test environments and trace redaction. It imports nothing from
  * DevTune's private packages. Client components import this barrel, so it must stay free of Node
- * built-ins: the Docker sandbox provider is exported separately as
- * @devtune/agentpicks/sandbox/docker.
+ * built-ins other than `node:crypto` (`src/root-export.spec.ts` checks it): the Docker sandbox
+ * provider is exported separately as @devtune/agentpicks/sandbox/docker.
  */
 export {
   BUNDLE_PATHS,
@@ -16,6 +16,7 @@ export {
   type BundleManifest,
   type RedactionSummary,
 } from './bundle/schema';
+export { uploadArtifactByteLimit } from './bundle/artifact-limits';
 export {
   CAPTURE_SOURCES_PY,
   SOURCE_ARTIFACT_BYTES,
@@ -52,6 +53,8 @@ export {
 } from './catalogue/categories';
 export type { EarlyStopPatterns } from './catalogue/early-stop';
 export { CATEGORY_EARLY_STOP } from './catalogue/early-stop.generated';
+export { CATEGORY_TOOLS } from './catalogue/category-tools.generated';
+export { resolveSetup } from './setup/resolve';
 export {
   boardEnvironments,
   categoryEnvironments,

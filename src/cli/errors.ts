@@ -97,3 +97,71 @@ export class GemfilePlatformsError extends Error {
 export class UnhashedRequirementsError extends Error {
   override readonly name = 'UnhashedRequirementsError';
 }
+
+/**
+ * An upload needs a DevTune sign-in or project API key, and neither `agentpicks login` nor the
+ * environment gave one, or the saved sign-in can't upload to the project it names.
+ */
+export class NotLoggedInError extends Error {
+  override readonly name = 'NotLoggedInError';
+}
+
+/** `--repo` names a repository with no remote agentpicks records, which DevTune needs to group its runs. */
+export class RepositoryRemoteError extends Error {
+  override readonly name = 'RepositoryRemoteError';
+}
+
+/** A bundle on disk is not one agentpicks wrote, or changed after it was written. */
+export class BundleError extends Error {
+  override readonly name = 'BundleError';
+}
+
+/**
+ * DevTune refused an upload or another API call, or could not be reached. The message is DevTune's
+ * own where it gave one, and `reason` its refusal code (such as setup_changed). `transient` marks a
+ * failure to reach DevTune or a status `isTransientStatus` names, which may pass on retry.
+ */
+export class UploadError extends Error {
+  override readonly name = 'UploadError';
+  readonly transient: boolean;
+  readonly reason: string | null;
+  readonly status: number | null;
+  constructor(
+    message: string,
+    options: { transient?: boolean; reason?: string; status?: number } = {},
+  ) {
+    super(message);
+    this.transient = options.transient ?? false;
+    this.reason = options.reason ?? null;
+    this.status = options.status ?? null;
+  }
+}
+
+/** A DevTune API key, from standard input or DEVTUNE_API_KEY, that isn't in DevTune's key format. */
+export class ApiKeyFormatError extends Error {
+  override readonly name = 'ApiKeyFormatError';
+}
+
+/** The directory the login is saved in is one another user could read or replace the file in. */
+export class UnsafeConfigDirectoryError extends Error {
+  override readonly name = 'UnsafeConfigDirectoryError';
+}
+
+/** Statuses where a retry may pass: 408, 425, 429 and 5xx. A renewal treats 502 and 504 as outcome unknown instead. */
+export function isTransientStatus(status: number) {
+  return status >= 500 || [408, 425, 429].includes(status);
+}
+
+/**
+ * Signing in to DevTune through the browser failed, or the saved sign-in can no longer be used.
+ * `transient` marks a request that may pass on retry: one that never reached DevTune, or a status
+ * `isTransientStatus` names. A renewal whose outcome is unknown is never transient.
+ */
+export class SignInError extends Error {
+  override readonly name = 'SignInError';
+  readonly transient: boolean;
+  constructor(message: string, options: { transient?: boolean } = {}) {
+    super(message);
+    this.transient = options.transient ?? false;
+  }
+}

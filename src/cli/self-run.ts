@@ -27,12 +27,19 @@ import type { SandboxPlatform } from '../sandbox/platform';
 import type { Sandbox, SandboxProvider } from '../sandbox/provider';
 import type { AgentPlan } from './agent-plan';
 import type { ResolvedTest } from './args';
-import { starterLockDigest, writeBundle, type WrittenBundle } from './bundle';
+import {
+  starterLockDigest,
+  writeBundle,
+  type BundleSetup,
+  type WrittenBundle,
+} from './bundle';
 import type { AgentCredentials } from './credentials';
 import type { RepositorySnapshot } from './repository';
 
 export interface SelfRunInput {
   test: ResolvedTest;
+  /** The setup file the run came from, written beside the manifest's fields. */
+  setup?: BundleSetup;
   plan: AgentPlan;
   credentials: AgentCredentials;
   /** The customer's repository at the commit to test, in place of the test's starter (`--repo`). */
@@ -186,6 +193,8 @@ export async function selfRun(input: SelfRunInput): Promise<SelfRunOutcome> {
       startedAt: run.startedAt,
       finishedAt: run.finishedAt,
     },
+    setup: input.setup,
+    earlyStop: test.category.earlyStop,
     artifacts,
     counts,
   });

@@ -2,15 +2,18 @@
  * ABOUTME: Drives the `agentpicks` command end to end against a fake machine and a fake sandbox:
  * a completed run's bundle and printed summary, a failed run leaving no bundle, and the named
  * refusals (unknown category or stack, Cursor, Keychain-only sign-in, missing Docker, Rails on an
- * arm64 host) before any container starts.
+ * arm64 host, no DevTune login, a repository with no remote) before any container starts; and,
+ * against a stubbed `fetch`, the upload after a run, `upload` and `login`.
  */
 import { spawnSync } from 'node:child_process';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,7 +21,9 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import packageJson from '../../package.json';
 import { bundleManifestSchema } from '../bundle/schema';
+import { CATEGORY_EARLY_STOP } from '../catalogue/early-stop.generated';
 import { parsePackedEntries } from '../locks/locked-files';
 import { WRITTEN_SECRETS_LIMIT } from '../run/artifact-redaction';
 import type { SandboxPlatform } from '../sandbox/platform';
@@ -27,17 +32,40 @@ import type {
   SandboxExecOptions,
   SandboxProvider,
 } from '../sandbox/provider';
+import {
+  completed,
+  created,
+  refused,
+  stubFetch,
+  TARGET,
+  UPLOADS,
+} from './fake-devtune';
 import { FAKE_HOME, fakeHost } from './fake-host';
+import {
+  CONNECTION,
+  connection as signedInConnection,
+  consentBrowser,
+  issued,
+  savedSession,
+  signInReplies,
+  TOKEN,
+} from './fake-oauth';
 import type { HostIo } from './host';
 import {
   cancelSandboxes,
   main,
   RUNNER,
+  USAGE,
   trackSandboxes,
   type CliContext,
 } from './main';
 
 const KEY = 'sk-ant-api03-secret-value-000000';
+const DEVTUNE_ENV = {
+  DEVTUNE_API_KEY: TARGET.apiKey,
+  DEVTUNE_PROJECT_ID: TARGET.projectId,
+  DEVTUNE_API_BASE_URL: TARGET.baseUrl,
+};
 const DIGEST = `sha256:${'c'.repeat(64)}`;
 
 interface FakeRun {
@@ -114,6 +142,7 @@ function context(
     err: (line) => errors.push(line),
     cwd,
     dockerfileDir: '/pkg/docker',
+    stdinIsTerminal: true,
     lines,
     errors,
     dockerCalls,
@@ -160,7 +189,14 @@ describe('agentpicks run', () => {
     const fake = fakeProvider({ artifacts: ARTIFACTS });
     const ctx = context(io, fake.provider, cwd);
     const code = await main(
-      ['run', '--category', 'error-tracking', '--stack', 'nextjs'],
+      [
+        'run',
+        '--no-upload',
+        '--category',
+        'error-tracking',
+        '--stack',
+        'nextjs',
+      ],
       ctx,
     );
     expect(ctx.errors).toEqual([]);
@@ -168,9 +204,13 @@ describe('agentpicks run', () => {
 
     const [runId] = readdirSync(join(cwd, 'agentpicks-runs'));
     const bundle = join(cwd, 'agentpicks-runs', runId!);
-    const manifest = bundleManifestSchema.parse(
-      JSON.parse(readFileSync(join(bundle, 'manifest.json'), 'utf8')),
+    const written = JSON.parse(
+      readFileSync(join(bundle, 'manifest.json'), 'utf8'),
     );
+    // A category run records the early stop it watched for, which the bundle format drops.
+    expect(written.earlyStop).toEqual(CATEGORY_EARLY_STOP['error-tracking']);
+    const manifest = bundleManifestSchema.parse(written);
+    expect(manifest).not.toHaveProperty('earlyStop');
     expect(manifest).toMatchObject({
       bundleVersion: 1,
       runId,
@@ -228,7 +268,7 @@ describe('agentpicks run', () => {
 
     expect(ctx.lines).toEqual(
       expect.arrayContaining([
-        'agentpicks 0.1.0, Docker 29.9.2',
+        `agentpicks ${packageJson.version}, Docker 29.9.2`,
         `Agent: Claude Code 2.1.322 at /usr/local/bin/claude, model opus (from ${FAKE_HOME}/.claude/settings.json)`,
         'Passes ANTHROPIC_API_KEY from your environment to Claude Code, for each run only.',
         "Each run needs Docker with 2 CPUs, 4 GB of memory and 20 GB free on Docker's disk, and may write up to 15 GB there while it runs.",
@@ -265,7 +305,16 @@ describe('agentpicks run', () => {
     const ctx = context(io, fake.provider, cwd);
     expect(
       await main(
-        ['run', '--category', 'ci', '--stack', 'nextjs', '--out', 'b'],
+        [
+          'run',
+          '--no-upload',
+          '--category',
+          'ci',
+          '--stack',
+          'nextjs',
+          '--out',
+          'b',
+        ],
         ctx,
       ),
     ).toBe(0);
@@ -287,7 +336,10 @@ describe('agentpicks run', () => {
     const fake = fakeProvider({ artifacts: ARTIFACTS, egressRejects: true });
     const ctx = context(io, fake.provider, cwd);
     expect(
-      await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+      await main(
+        ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+        ctx,
+      ),
     ).toBe(0);
     const [runId] = readdirSync(join(cwd, 'agentpicks-runs'));
     const manifest = bundleManifestSchema.parse(
@@ -315,7 +367,10 @@ describe('agentpicks run', () => {
     });
     const ctx = context(io, fake.provider, cwd);
     expect(
-      await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+      await main(
+        ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+        ctx,
+      ),
     ).toBe(1);
     expect(ctx.lines).toContainEqual(
       expect.stringMatching(
@@ -332,7 +387,10 @@ describe('agentpicks run', () => {
     });
     const ctx = context(io, fake.provider, cwd);
     expect(
-      await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+      await main(
+        ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+        ctx,
+      ),
     ).toBe(1);
     expect(ctx.lines).toContainEqual(
       expect.stringMatching(
@@ -353,7 +411,10 @@ describe('agentpicks run', () => {
       });
       const fake = fakeProvider({ artifacts: ARTIFACTS });
       const ctx = context(io, fake.provider, cwd, platform);
-      await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx);
+      await main(
+        ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+        ctx,
+      );
       expect(fake.written.get('/opt/agent-picks/setup.sh')).toContain(node);
     },
   );
@@ -365,7 +426,10 @@ describe('agentpicks run', () => {
       fakeProvider({ artifacts: ARTIFACTS }).provider,
       cwd,
     );
-    await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx);
+    await main(
+      ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+      ctx,
+    );
     expect(ctx.labels).toEqual([
       {
         'dev.devtune.agentpicks.session':
@@ -380,7 +444,16 @@ describe('agentpicks run', () => {
     const ctx = context(io, fake.provider, cwd);
     expect(
       await main(
-        ['run', '--category', 'ci', '--stack', 'nextjs', '--runs', '2'],
+        [
+          'run',
+          '--no-upload',
+          '--category',
+          'ci',
+          '--stack',
+          'nextjs',
+          '--runs',
+          '2',
+        ],
         ctx,
       ),
     ).toBe(1);
@@ -423,7 +496,10 @@ describe('agentpicks run', () => {
       });
       const ctx = context(io, exited(exitCode, false).provider, cwd);
       expect(
-        await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+        await main(
+          ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+          ctx,
+        ),
       ).toBe(1);
       expect(ctx.lines).toEqual(
         expect.arrayContaining([
@@ -451,7 +527,10 @@ describe('agentpicks run', () => {
         });
         const ctx = context(io, exited(exitCode, killed).provider, cwd);
         expect(
-          await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+          await main(
+            ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+            ctx,
+          ),
         ).toBe(0);
         expect(readdirSync(join(cwd, 'agentpicks-runs'))).toHaveLength(1);
       },
@@ -474,7 +553,16 @@ describe('agentpicks run', () => {
     const ctx = context(io, fake.provider, cwd);
     expect(
       await main(
-        ['run', '--category', 'ci', '--stack', 'nextjs', '--runs', '2'],
+        [
+          'run',
+          '--no-upload',
+          '--category',
+          'ci',
+          '--stack',
+          'nextjs',
+          '--runs',
+          '2',
+        ],
         ctx,
       ),
     ).toBe(1);
@@ -515,7 +603,7 @@ describe('agentpicks run', () => {
     async (_case, argv, io, message) => {
       const fake = fakeProvider();
       const ctx = context(io, fake.provider, cwd);
-      expect(await main(['run', ...argv], ctx)).toBe(1);
+      expect(await main(['run', '--no-upload', ...argv], ctx)).toBe(1);
       expect(ctx.errors).toEqual([expect.stringMatching(message)]);
       expect(ctx.dockerCalls).toEqual([]);
       expect(fake.execs).toEqual([]);
@@ -532,7 +620,14 @@ describe('agentpicks run', () => {
     );
     expect(
       await main(
-        ['run', '--category', 'error-tracking', '--stack', 'rails'],
+        [
+          'run',
+          '--no-upload',
+          '--category',
+          'error-tracking',
+          '--stack',
+          'rails',
+        ],
         ctx,
       ),
     ).toBe(1);
@@ -552,7 +647,10 @@ describe('agentpicks run', () => {
     process.env.PATH = join(cwd, 'no-docker-here');
     try {
       expect(
-        await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+        await main(
+          ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+          ctx,
+        ),
       ).toBe(1);
     } finally {
       process.env.PATH = path;
@@ -612,7 +710,10 @@ describe('agentpicks run --repo', () => {
     const fake = fakeProvider({ artifacts: ARTIFACTS });
     const ctx = context(io(), fake.provider, cwd);
     expect(
-      await main(['run', '--category', 'error-tracking', '--repo', 'app'], ctx),
+      await main(
+        ['run', '--no-upload', '--category', 'error-tracking', '--repo', 'app'],
+        ctx,
+      ),
     ).toBe(0);
     expect(ctx.errors).toEqual([]);
 
@@ -660,9 +761,12 @@ describe('agentpicks run --repo', () => {
     write('notes.md', 'draft\n');
     const fake = fakeProvider({ artifacts: ARTIFACTS });
     const ctx = context(io(), fake.provider, cwd);
-    expect(await main(['run', '--category', 'ci', '--repo', 'app'], ctx)).toBe(
-      0,
-    );
+    expect(
+      await main(
+        ['run', '--no-upload', '--category', 'ci', '--repo', 'app'],
+        ctx,
+      ),
+    ).toBe(0);
     const notice = `Testing commit ${head.slice(0, 12)} of app. Uncommitted changes aren't included.`;
     expect(ctx.lines.indexOf(notice)).toBeGreaterThan(-1);
     expect(ctx.lines.indexOf(notice)).toBeLessThan(
@@ -686,7 +790,16 @@ describe('agentpicks run --repo', () => {
     const ctx = context(io(), fake.provider, cwd);
     expect(
       await main(
-        ['run', '--category', 'ci', '--repo', repo, '--ref', first.slice(0, 8)],
+        [
+          'run',
+          '--no-upload',
+          '--category',
+          'ci',
+          '--repo',
+          repo,
+          '--ref',
+          first.slice(0, 8),
+        ],
         ctx,
       ),
     ).toBe(0);
@@ -735,12 +848,890 @@ describe('agentpicks run --repo', () => {
       arrange();
       const fake = fakeProvider();
       const ctx = context(io(), fake.provider, cwd);
-      expect(await main(['run', '--category', 'ci', ...argv], ctx)).toBe(1);
+      expect(
+        await main(['run', '--no-upload', '--category', 'ci', ...argv], ctx),
+      ).toBe(1);
       expect(ctx.errors).toEqual([expect.stringMatching(message)]);
       expect(ctx.dockerCalls).toEqual([]);
       expect(fake.execs).toEqual([]);
     },
   );
+
+  it('refuses to upload a repository with no remote before Docker is touched, and runs it with --no-upload', async () => {
+    git('remote', 'remove', 'origin');
+    const calls = stubFetch({});
+    const host = () =>
+      fakeHost({
+        commands: CLAUDE,
+        env: { ...DEVTUNE_ENV, ANTHROPIC_API_KEY: KEY },
+      });
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    const ctx = context(host(), fake.provider, cwd);
+    expect(await main(['run', '--category', 'ci', '--repo', 'app'], ctx)).toBe(
+      1,
+    );
+    expect(ctx.errors).toEqual([
+      `DevTune groups a repository's runs by its remote, and ${repo} has none agentpicks can record. Add an origin remote with a network address, or pass --no-upload to keep the bundles on this machine only.`,
+    ]);
+    expect(ctx.dockerCalls).toEqual([]);
+    expect(fake.execs).toEqual([]);
+
+    const local = context(host(), fake.provider, cwd);
+    expect(
+      await main(
+        ['run', '--no-upload', '--category', 'ci', '--repo', 'app'],
+        local,
+      ),
+    ).toBe(0);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('agentpicks run, uploading', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const BUNDLE_NAMES = Object.keys(ARTIFACTS);
+  const RUN_ID = '0f9d5a8e-5d1c-4b8e-9a43-3c1f0e6b7a21';
+  const savedLogin = (env: Record<string, string> = {}) =>
+    fakeHost({
+      commands: CLAUDE,
+      env: {
+        ANTHROPIC_API_KEY: KEY,
+        DEVTUNE_API_BASE_URL: TARGET.baseUrl,
+        ...env,
+      },
+      files: {
+        [`${FAKE_HOME}/.config/agentpicks/credentials.json`]: JSON.stringify({
+          projectId: TARGET.projectId,
+          apiKey: TARGET.apiKey,
+        }),
+      },
+    });
+
+  it('uploads the bundle once it is written and listed, with the saved login, and prints where it went', async () => {
+    const calls = stubFetch({
+      [`POST ${UPLOADS}`]: [
+        created(RUN_ID, BUNDLE_NAMES, {
+          'meta.json': 'https://storage.test/meta',
+          'transcript.jsonl': 'https://storage.test/transcript',
+          'diff.patch': 'https://storage.test/diff',
+          'earlystop.json': 'https://storage.test/earlystop',
+        }),
+      ],
+      [`POST ${UPLOADS}/${RUN_ID}/complete`]: [completed(RUN_ID)],
+    });
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    const ctx = context(savedLogin(), fake.provider, cwd);
+    expect(
+      await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+    ).toBe(0);
+    expect(ctx.errors).toEqual([]);
+
+    const [runId] = readdirSync(join(cwd, 'agentpicks-runs'));
+    const bundle = join(cwd, 'agentpicks-runs', runId!);
+    expect(JSON.parse(calls[0]!.body!).runId).toBe(runId);
+    expect(calls.map((c) => c.method)).toEqual([
+      'POST',
+      'PUT',
+      'PUT',
+      'PUT',
+      'PUT',
+      'POST',
+    ]);
+    expect(calls[0]!.headers.Authorization).toBe(`Bearer ${TARGET.apiKey}`);
+
+    const listed = ctx.lines.indexOf('  Redactions: 1 (transcript.jsonl 1)');
+    expect(ctx.lines.slice(listed + 1)).toEqual([
+      `  Uploaded run ${RUN_ID} to DevTune; analysis pending.`,
+      `  Upload status: ${UPLOADS}/${RUN_ID}`,
+      '',
+      `1 of 1 run written to ${join(cwd, 'agentpicks-runs')}`,
+      '1 uploaded to DevTune.',
+    ]);
+    expect(ctx.lines).toContain(`  Bundle: ${bundle}`);
+    expect(
+      ctx.lines.indexOf(
+        `Uploads each bundle to DevTune project ${TARGET.projectId} once it is written.`,
+      ),
+    ).toBeLessThan(ctx.lines.indexOf('Run 1 of 1'));
+    expect([...ctx.lines, ...ctx.errors].join('\n')).not.toContain(
+      TARGET.apiKey,
+    );
+  });
+
+  it('refuses without a login before Docker is touched, naming login and --no-upload', async () => {
+    const calls = stubFetch({});
+    const fake = fakeProvider();
+    const ctx = context(
+      fakeHost({ commands: CLAUDE, env: { ANTHROPIC_API_KEY: KEY } }),
+      fake.provider,
+      cwd,
+    );
+    expect(
+      await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+    ).toBe(1);
+    expect(ctx.errors).toEqual([
+      'Uploading needs a DevTune sign-in or project API key. Run agentpicks login, or set DEVTUNE_API_KEY and DEVTUNE_PROJECT_ID. To keep bundles on this machine only, pass --no-upload.',
+    ]);
+    expect(ctx.dockerCalls).toEqual([]);
+    expect(fake.execs).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  it('prints a refusal and how to send the bundle later, and starts no further runs', async () => {
+    const message =
+      'Uploading self-runs needs an Agent Picks Local Runner, Cloud or Enterprise plan.';
+    stubFetch({
+      [`POST ${UPLOADS}`]: [refused(403, 'plan_excludes_uploads', message)],
+    });
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    const ctx = context(
+      fakeHost({
+        commands: CLAUDE,
+        env: { ...DEVTUNE_ENV, ANTHROPIC_API_KEY: KEY },
+      }),
+      fake.provider,
+      cwd,
+    );
+    expect(
+      await main(
+        ['run', '--category', 'ci', '--stack', 'nextjs', '--runs', '2'],
+        ctx,
+      ),
+    ).toBe(1);
+    const [runId] = readdirSync(join(cwd, 'agentpicks-runs'));
+    const bundle = join(cwd, 'agentpicks-runs', runId!);
+    expect(ctx.errors).toEqual([
+      message,
+      `The bundle stays in ${bundle}. Send it with: agentpicks upload ${bundle}`,
+    ]);
+    expect(ctx.lines).not.toContain('Run 2 of 2');
+    expect(ctx.lines.slice(-2)).toEqual([
+      `1 of 2 runs written to ${join(cwd, 'agentpicks-runs')}`,
+      '0 uploaded to DevTune.',
+    ]);
+  });
+});
+
+describe('agentpicks upload', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const host = () =>
+    fakeHost({
+      commands: CLAUDE,
+      env: { ...DEVTUNE_ENV, ANTHROPIC_API_KEY: KEY },
+    });
+
+  it('lists and uploads every bundle in the --out directory of a --no-upload run', async () => {
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    expect(
+      await main(
+        ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+        context(host(), fake.provider, cwd),
+      ),
+    ).toBe(0);
+    const [runId] = readdirSync(join(cwd, 'agentpicks-runs'));
+    const bundle = join(cwd, 'agentpicks-runs', runId!);
+    const calls = stubFetch({
+      [`POST ${UPLOADS}`]: [
+        created(runId!, Object.keys(ARTIFACTS), {
+          'diff.patch': 'https://storage.test/diff',
+        }),
+      ],
+      [`POST ${UPLOADS}/${runId}/complete`]: [completed(runId!)],
+    });
+    const ctx = context(host(), fake.provider, cwd);
+    expect(await main(['upload', 'agentpicks-runs'], ctx)).toBe(0);
+    expect(ctx.errors).toEqual([]);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `POST ${UPLOADS}`,
+      'PUT https://storage.test/diff',
+      `POST ${UPLOADS}/${runId}/complete`,
+    ]);
+    expect(ctx.lines).toEqual([
+      `  Bundle: ${bundle}`,
+      expect.stringMatching(/^ {4}manifest\.json +\d+(\.\d)? K?B$/),
+      expect.stringMatching(/^ {4}artifacts\/meta\.json +\d+ B$/),
+      expect.stringMatching(/^ {4}artifacts\/transcript\.jsonl +\d+ B$/),
+      expect.stringMatching(/^ {4}artifacts\/diff\.patch +\d+ B$/),
+      expect.stringMatching(/^ {4}artifacts\/earlystop\.json +\d+ B$/),
+      '  Redactions: 1 (transcript.jsonl 1)',
+      `  Uploaded run ${runId} to DevTune; analysis pending.`,
+      `  Upload status: ${UPLOADS}/${runId}`,
+    ]);
+  });
+
+  it('reports a bundle that fails its checks and still uploads the rest of the directory', async () => {
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    expect(
+      await main(
+        [
+          'run',
+          '--no-upload',
+          '--runs',
+          '2',
+          '--category',
+          'ci',
+          '--stack',
+          'nextjs',
+        ],
+        context(host(), fake.provider, cwd),
+      ),
+    ).toBe(0);
+    const [broken, good] = readdirSync(join(cwd, 'agentpicks-runs')).sort();
+    writeFileSync(join(cwd, 'agentpicks-runs', broken!, 'manifest.json'), '{}');
+    const calls = stubFetch({
+      [`POST ${UPLOADS}`]: [created(good!, Object.keys(ARTIFACTS), {})],
+      [`POST ${UPLOADS}/${good}/complete`]: [completed(good!)],
+    });
+    const ctx = context(host(), fake.provider, cwd);
+    expect(await main(['upload', 'agentpicks-runs'], ctx)).toBe(1);
+    expect(ctx.errors).toEqual([
+      expect.stringContaining(`${broken} is not a bundle agentpicks wrote`),
+    ]);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `POST ${UPLOADS}`,
+      `POST ${UPLOADS}/${good}/complete`,
+    ]);
+    expect(ctx.lines.at(-1)).toBe('1 of 2 bundles uploaded to DevTune.');
+  });
+
+  it('refuses without a login', async () => {
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    await main(
+      ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+      context(host(), fake.provider, cwd),
+    );
+    const ctx = context(fakeHost(), fake.provider, cwd);
+    expect(await main(['upload', 'agentpicks-runs'], ctx)).toBe(1);
+    expect(ctx.errors[0]).toMatch(
+      /^Uploading needs a DevTune sign-in or project API key/,
+    );
+  });
+});
+
+describe('agentpicks login', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const host = (env: Record<string, string> = {}) =>
+    fakeHost({
+      env: {
+        XDG_CONFIG_HOME: join(cwd, 'config'),
+        DEVTUNE_API_BASE_URL: TARGET.baseUrl,
+        ...env,
+      },
+    });
+  const path = () => join(cwd, 'config', 'agentpicks', 'credentials.json');
+  const connection = (scopes: string[]) => ({
+    status: 200,
+    body: {
+      data: {
+        project: {
+          id: TARGET.projectId,
+          name: 'Acme',
+          paused: false,
+          domains: [],
+        },
+        credential: { type: 'api_key' },
+        scopes,
+        features: {},
+        checkedAt: '2026-11-11T12:00:00Z',
+      },
+    },
+  });
+
+  it('saves the key and the project it belongs to, readable by this user only, and never prints the key', async () => {
+    const calls = stubFetch({
+      [`GET ${TARGET.baseUrl}/connection`]: [
+        connection(['agent_picks.run', 'project.read']),
+      ],
+    });
+    const ctx = {
+      ...context(host(), fakeProvider().provider, cwd),
+      readSecret: async () => `${TARGET.apiKey}\n`,
+    };
+    expect(await main(['login', '--api-key'], ctx)).toBe(0);
+    expect(calls[0]!.headers.Authorization).toBe(`Bearer ${TARGET.apiKey}`);
+    expect(JSON.parse(readFileSync(path(), 'utf8'))).toEqual({
+      projectId: TARGET.projectId,
+      apiKey: TARGET.apiKey,
+    });
+    expect(statSync(path()).mode & 0o777).toBe(0o600);
+    expect(ctx.lines).toEqual([
+      `The key belongs to Acme (${TARGET.projectId}).`,
+      `Saved to ${path()}. run and upload send bundles to this project.`,
+    ]);
+    expect([...ctx.lines, ...ctx.errors].join('\n')).not.toContain(
+      TARGET.apiKey,
+    );
+  });
+
+  it('saves the key for --project without checking it', async () => {
+    const calls = stubFetch({});
+    const ctx = {
+      ...context(host(), fakeProvider().provider, cwd),
+      readSecret: async () => TARGET.apiKey,
+    };
+    expect(
+      await main(['login', '--api-key', '--project', TARGET.projectId], ctx),
+    ).toBe(0);
+    expect(calls).toEqual([]);
+    expect(JSON.parse(readFileSync(path(), 'utf8')).projectId).toBe(
+      TARGET.projectId,
+    );
+  });
+
+  it('refuses a key holding a character a header cannot carry by name, without echoing it or saving it', async () => {
+    const calls = stubFetch({});
+    const ctx = {
+      ...context(host(), fakeProvider().provider, cwd),
+      readSecret: async () => `${TARGET.apiKey}\0`,
+    };
+    expect(
+      await main(['login', '--api-key', '--project', TARGET.projectId], ctx),
+    ).toBe(1);
+    expect(ctx.errors).toEqual([
+      "The key read from standard input isn't a DevTune API key: a key is dtk_live_ followed by letters and digits. Copy it again from API Keys in DevTune.",
+    ]);
+    expect(existsSync(path())).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  it("saves a key where the lock's native addon cannot load", async () => {
+    vi.doMock('fs-native-extensions', () => {
+      throw new Error('No native build was found for platform=linux libc=musl');
+    });
+    try {
+      stubFetch({});
+      const ctx = {
+        ...context(host(), fakeProvider().provider, cwd),
+        readSecret: async () => TARGET.apiKey,
+      };
+      expect(
+        await main(['login', '--api-key', '--project', TARGET.projectId], ctx),
+      ).toBe(0);
+      expect(JSON.parse(readFileSync(path(), 'utf8')).apiKey).toBe(
+        TARGET.apiKey,
+      );
+    } finally {
+      vi.doUnmock('fs-native-extensions');
+    }
+  });
+
+  it('refuses a key without the Agent Picks Run scope, saving nothing', async () => {
+    stubFetch({
+      [`GET ${TARGET.baseUrl}/connection`]: [connection(['project.read'])],
+    });
+    const ctx = {
+      ...context(host(), fakeProvider().provider, cwd),
+      readSecret: async () => TARGET.apiKey,
+    };
+    expect(await main(['login', '--api-key'], ctx)).toBe(1);
+    expect(ctx.errors).toEqual([
+      "This key can't upload runs to Acme: it needs the Agent Picks Run scope.",
+    ]);
+    expect(existsSync(path())).toBe(false);
+  });
+});
+
+describe('agentpicks login, in the browser', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const host = (env: Record<string, string> = {}) =>
+    fakeHost({
+      env: {
+        XDG_CONFIG_HOME: join(cwd, 'config'),
+        DEVTUNE_API_BASE_URL: TARGET.baseUrl,
+        ...env,
+      },
+    });
+  const path = () => join(cwd, 'config', 'agentpicks', 'credentials.json');
+
+  it('signs in by default, saving the session for the chosen project readable by this user only, and prints no token', async () => {
+    stubFetch(signInReplies());
+    const browser = consentBrowser();
+    const ctx = {
+      ...context(host(), fakeProvider().provider, cwd),
+      openBrowser: browser.open,
+    };
+    expect(await main(['login'], ctx)).toBe(0);
+    const { authorize } = await browser.visit;
+    expect(ctx.lines).toEqual([
+      `Open this address in a browser to sign in and choose your project:\n${authorize.href}`,
+      `Signed in to Acme (${TARGET.projectId}).`,
+      'Granted: actions.write, agent_picks.run, project.read, visibility.read.',
+      `Saved to ${path()}. run and upload send bundles to this project.`,
+    ]);
+    expect(JSON.parse(readFileSync(path(), 'utf8'))).toMatchObject({
+      type: 'oauth',
+      scopes: [
+        'agent_picks.run',
+        'visibility.read',
+        'actions.write',
+        'project.read',
+      ],
+      projectId: TARGET.projectId,
+      baseUrl: TARGET.baseUrl,
+      refreshToken: 'refresh-one',
+    });
+    expect(statSync(path()).mode & 0o777).toBe(0o600);
+    // The lock is an empty file; nothing else is left beside the login.
+    expect(readdirSync(join(cwd, 'config', 'agentpicks')).sort()).toEqual([
+      'credentials.json',
+      'credentials.json.lock',
+    ]);
+    expect(readFileSync(`${path()}.lock`, 'utf8')).toBe('');
+    expect([...ctx.lines, ...ctx.errors].join('\n')).not.toMatch(
+      /access-one|refresh-one|single-use-code/,
+    );
+  });
+
+  it('replaces a saved key with the sign-in', async () => {
+    mkdirSync(join(cwd, 'config', 'agentpicks'), {
+      recursive: true,
+      mode: 0o700,
+    });
+    writeFileSync(
+      path(),
+      JSON.stringify({ projectId: TARGET.projectId, apiKey: TARGET.apiKey }),
+    );
+    stubFetch(signInReplies());
+    const ctx = {
+      ...context(host(), fakeProvider().provider, cwd),
+      openBrowser: consentBrowser().open,
+    };
+    expect(await main(['login'], ctx)).toBe(0);
+    expect(readFileSync(path(), 'utf8')).not.toContain(TARGET.apiKey);
+  });
+
+  it('with --no-browser, prints the address without opening it', async () => {
+    stubFetch(signInReplies());
+    const browser = consentBrowser();
+    const opened = vi.fn();
+    const base = context(host(), fakeProvider().provider, cwd);
+    // Someone opens the printed address by hand.
+    const ctx = {
+      ...base,
+      openBrowser: opened,
+      out: (line: string) => {
+        base.lines.push(line);
+        if (line.startsWith('Open this address'))
+          void browser.open(line.split('\n')[1]!);
+      },
+    };
+    expect(await main(['login', '--no-browser'], ctx)).toBe(0);
+    expect(opened).not.toHaveBeenCalled();
+    expect(base.lines[1]).toBe(`Signed in to Acme (${TARGET.projectId}).`);
+  });
+
+  it('says to open the address by hand when no browser opens', async () => {
+    stubFetch(signInReplies());
+    const browser = consentBrowser();
+    const base = context(host(), fakeProvider().provider, cwd);
+    const ctx = {
+      ...base,
+      openBrowser: async () => {
+        throw new Error('xdg-open: not found');
+      },
+      out: (line: string) => {
+        base.lines.push(line);
+        if (line.startsWith("Couldn't open a browser"))
+          void browser.open(base.lines[0]!.split('\n')[1]!);
+      },
+    };
+    expect(await main(['login'], ctx)).toBe(0);
+    expect(base.lines.slice(1, 3)).toEqual([
+      "Couldn't open a browser. Open the address above in a browser on this machine.",
+      `Signed in to Acme (${TARGET.projectId}).`,
+    ]);
+  });
+
+  it('saves a sign-in with what the member could grant, naming the scopes it lacks', async () => {
+    stubFetch(signInReplies(['project.read', 'visibility.read']));
+    const ctx = {
+      ...context(host(), fakeProvider().provider, cwd),
+      openBrowser: consentBrowser().open,
+    };
+    expect(await main(['login'], ctx)).toBe(0);
+    expect(ctx.lines.slice(1)).toEqual([
+      `Signed in to Acme (${TARGET.projectId}).`,
+      'Granted: project.read, visibility.read.',
+      "Not granted: agent_picks.run, actions.write. Run agentpicks login again and keep them selected; if DevTune doesn't offer them, ask an account owner for access.",
+      `Saved to ${path()}. Uploading needs agent_picks.run, so run and upload refuse until a sign-in holds it.`,
+    ]);
+    expect(JSON.parse(readFileSync(path(), 'utf8')).scopes).toEqual([
+      'project.read',
+      'visibility.read',
+    ]);
+  });
+
+  it('names the variables that override or conflict with the sign-in', async () => {
+    for (const [env, note] of [
+      [
+        { DEVTUNE_API_KEY: TARGET.apiKey },
+        'DEVTUNE_API_KEY is set here, and overrides this sign-in.',
+      ],
+      [
+        { DEVTUNE_PROJECT_ID: '11111111-1111-4111-8111-111111111111' },
+        `DEVTUNE_PROJECT_ID is set here: run and upload refuse it unless it is ${TARGET.projectId}.`,
+      ],
+    ] as const) {
+      stubFetch(signInReplies());
+      const ctx = {
+        ...context(host(env), fakeProvider().provider, cwd),
+        openBrowser: consentBrowser().open,
+      };
+      expect(await main(['login'], ctx)).toBe(0);
+      expect(ctx.lines.at(-1)).toBe(note);
+    }
+  });
+
+  it('leaves the saved sign-in as it was when consent is denied', async () => {
+    mkdirSync(join(cwd, 'config', 'agentpicks'), {
+      recursive: true,
+      mode: 0o700,
+    });
+    writeFileSync(path(), JSON.stringify(savedSession(0)), { mode: 0o600 });
+    const before = readFileSync(path(), 'utf8');
+    stubFetch(signInReplies());
+    const ctx = {
+      ...context(host(), fakeProvider().provider, cwd),
+      openBrowser: consentBrowser({ deny: true }).open,
+    };
+    expect(await main(['login'], ctx)).toBe(1);
+    expect(ctx.errors).toEqual([
+      'Sign-in was not approved. Run agentpicks login to try again.',
+    ]);
+    expect(readFileSync(path(), 'utf8')).toBe(before);
+  });
+
+  it('refuses a project DevTune names with an id that is not a UUID, saving nothing', async () => {
+    const replies = signInReplies();
+    const answer = signedInConnection();
+    answer.body.data.project.id = '../other';
+    replies[`GET ${CONNECTION}`] = [answer];
+    stubFetch(replies);
+    const ctx = {
+      ...context(host(), fakeProvider().provider, cwd),
+      openBrowser: consentBrowser().open,
+    };
+    expect(await main(['login'], ctx)).toBe(1);
+    expect(existsSync(path())).toBe(false);
+  });
+
+  it('signs in through the browser when standard input is not a terminal, naming --api-key for a piped key', async () => {
+    stubFetch(signInReplies());
+    const ctx = {
+      ...context(host(), fakeProvider().provider, cwd),
+      stdinIsTerminal: false,
+      openBrowser: consentBrowser().open,
+    };
+    expect(await main(['login'], ctx)).toBe(0);
+    expect(ctx.errors).toEqual([
+      'To save a key from standard input, pass --api-key.',
+    ]);
+    expect(ctx.lines[1]).toBe(`Signed in to Acme (${TARGET.projectId}).`);
+  });
+
+  it.each([
+    [
+      ['login', '--project', TARGET.projectId],
+      /^--project goes with --api-key/,
+    ],
+    [['login', '--api-key', '--no-browser'], /^--no-browser goes with/],
+  ])('refuses %j', async (argv, message) => {
+    const calls = stubFetch({});
+    const ctx = context(host(), fakeProvider().provider, cwd);
+    expect(await main(argv, ctx)).toBe(1);
+    expect(ctx.errors[0]).toMatch(message);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('agentpicks run and upload, with a saved sign-in', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const RUN_ID = '0f9d5a8e-5d1c-4b8e-9a43-3c1f0e6b7a21';
+  const path = () => join(cwd, 'config', 'agentpicks', 'credentials.json');
+  /** This machine with the sign-in saved for real, since renewing it reads and writes the file. */
+  const signedIn = (expiresAt: number) => {
+    mkdirSync(join(cwd, 'config', 'agentpicks'), {
+      recursive: true,
+      mode: 0o700,
+    });
+    writeFileSync(path(), JSON.stringify(savedSession(expiresAt)), {
+      mode: 0o600,
+    });
+    return {
+      ...fakeHost({
+        commands: CLAUDE,
+        env: {
+          ANTHROPIC_API_KEY: KEY,
+          XDG_CONFIG_HOME: join(cwd, 'config'),
+          DEVTUNE_API_BASE_URL: TARGET.baseUrl,
+        },
+      }),
+      readFile: (file: string) =>
+        existsSync(file) ? readFileSync(file, 'utf8') : null,
+    };
+  };
+  const uploadReplies = () => ({
+    [`GET ${CONNECTION}`]: [signedInConnection()],
+    [`POST ${UPLOADS}`]: [
+      created(RUN_ID, Object.keys(ARTIFACTS), {
+        'diff.patch': 'https://storage.test/diff',
+      }),
+    ],
+    [`POST ${UPLOADS}/${RUN_ID}/complete`]: [completed(RUN_ID)],
+  });
+
+  it('uploads with the access token while it is valid', async () => {
+    const calls = stubFetch(uploadReplies());
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    const ctx = context(signedIn(Date.now() + 3_600_000), fake.provider, cwd);
+    expect(
+      await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+    ).toBe(0);
+    expect(calls.map((c) => c.url)).not.toContain(TOKEN);
+    expect(
+      calls
+        .filter((c) => c.method === 'POST')
+        .map((c) => c.headers.Authorization),
+    ).toEqual(['Bearer access-one', 'Bearer access-one']);
+    expect([...ctx.lines, ...ctx.errors].join('\n')).not.toMatch(
+      /access-one|refresh-one/,
+    );
+  });
+
+  it('renews an expired sign-in before Docker starts, saves it, and uploads with the new token', async () => {
+    const calls = stubFetch({
+      [`POST ${TOKEN}`]: [issued('access-two', 'refresh-two')],
+      ...uploadReplies(),
+    });
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    const ctx = context(signedIn(0), fake.provider, cwd);
+    expect(
+      await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+    ).toBe(0);
+    expect(calls.slice(0, 2).map((c) => c.url)).toEqual([TOKEN, CONNECTION]);
+    expect(calls[1]!.headers.Authorization).toBe('Bearer access-two');
+    expect(calls.filter((c) => c.url === TOKEN)).toHaveLength(1);
+    expect(calls.at(-1)!.headers.Authorization).toBe('Bearer access-two');
+    expect(JSON.parse(readFileSync(path(), 'utf8'))).toMatchObject({
+      accessToken: 'access-two',
+      refreshToken: 'refresh-two',
+    });
+  });
+
+  it('stops before Docker or any upload when the sign-in cannot be renewed, saying to log in again', async () => {
+    const calls = stubFetch({
+      [`POST ${TOKEN}`]: [{ status: 400, body: { error: 'invalid_grant' } }],
+    });
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    const ctx = context(signedIn(0), fake.provider, cwd);
+    const before = readFileSync(path(), 'utf8');
+    expect(
+      await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+    ).toBe(1);
+    expect(ctx.errors).toEqual([
+      'Your DevTune sign-in has expired or was revoked. Run agentpicks login again.',
+    ]);
+    expect(ctx.dockerCalls).toEqual([]);
+    expect(fake.execs).toEqual([]);
+    expect(calls.map((c) => c.url)).toEqual([TOKEN]);
+    expect(readFileSync(path(), 'utf8')).toBe(before);
+  });
+
+  it('upload refuses before sending anything when the sign-in cannot be renewed', async () => {
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    const io = signedIn(0);
+    expect(
+      await main(
+        ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+        context(io, fake.provider, cwd),
+      ),
+    ).toBe(0);
+    const calls = stubFetch({
+      [`POST ${TOKEN}`]: [{ status: 401, body: {} }],
+    });
+    const ctx = context(io, fake.provider, cwd);
+    expect(await main(['upload', 'agentpicks-runs'], ctx)).toBe(1);
+    expect(ctx.errors).toEqual([
+      'Your DevTune sign-in has expired or was revoked. Run agentpicks login again.',
+    ]);
+    expect(calls.map((c) => c.url)).toEqual([TOKEN]);
+  });
+
+  it.each([
+    [
+      'revoked',
+      { status: 401, body: {} },
+      'DevTune refused the sign-in. Run agentpicks login again.',
+    ],
+    [
+      'without agent_picks.run',
+      signedInConnection(['project.read', 'visibility.read']),
+      "This sign-in can't upload runs to Acme now: it lacks the agent_picks.run scope. Your role on the project doesn't allow it, the project is paused, or it was unselected when you signed in. Run agentpicks login again once it can be granted, or ask an account owner for access. To keep bundles on this machine only, pass --no-upload.",
+    ],
+  ])(
+    'stops before Docker when DevTune says the sign-in is %s now',
+    async (_state, answer, message) => {
+      const calls = stubFetch({ [`GET ${CONNECTION}`]: [answer] });
+      const fake = fakeProvider({ artifacts: ARTIFACTS });
+      const ctx = context(signedIn(Date.now() + 3_600_000), fake.provider, cwd);
+      expect(
+        await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+      ).toBe(1);
+      expect(ctx.errors).toEqual([message]);
+      expect(ctx.dockerCalls).toEqual([]);
+      expect(calls.map((c) => c.url)).toEqual([CONNECTION]);
+    },
+  );
+
+  it.each([
+    [
+      'cannot be reached',
+      new TypeError('fetch failed'),
+      "Couldn't check the DevTune sign-in before starting; uploading checks it again. Couldn't reach DevTune at https://devtune.test/api/v2 (TypeError). Check the connection and try again.",
+    ],
+    [
+      'fails',
+      { status: 503, body: {} },
+      "Couldn't check the DevTune sign-in before starting; uploading checks it again. DevTune answered 503.",
+    ],
+    [
+      'limits the rate',
+      { status: 429, body: { message: 'Too many requests. Try again later.' } },
+      "Couldn't check the DevTune sign-in before starting; uploading checks it again. Too many requests. Try again later.",
+    ],
+  ])(
+    'warns and runs when DevTune %s at the sign-in check, then uploads',
+    async (_state, answer, warning) => {
+      const replies = uploadReplies();
+      stubFetch({ ...replies, [`GET ${CONNECTION}`]: [answer] });
+      const fake = fakeProvider({ artifacts: ARTIFACTS });
+      const ctx = context(signedIn(Date.now() + 3_600_000), fake.provider, cwd);
+      expect(
+        await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+      ).toBe(0);
+      expect(ctx.errors).toEqual([warning]);
+      expect(fake.execs.length).toBeGreaterThan(0);
+    },
+  );
+
+  it('warns and runs when renewing the sign-in fails with a 5xx, keeping the bundle when the upload fails too', async () => {
+    stubFetch({
+      [`POST ${TOKEN}`]: [
+        { status: 503, body: {} },
+        { status: 503, body: {} },
+      ],
+    });
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    const ctx = context(signedIn(0), fake.provider, cwd);
+    expect(
+      await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+    ).toBe(1);
+    expect(ctx.errors[0]).toBe(
+      "Couldn't check the DevTune sign-in before starting; uploading checks it again. A sign-in request to DevTune failed (503). Try again later.",
+    );
+    expect(fake.execs.length).toBeGreaterThan(0);
+    expect(ctx.errors[1]).toBe(
+      'A sign-in request to DevTune failed (503). Try again later.',
+    );
+    expect(ctx.errors[2]).toMatch(/^The bundle stays in /);
+  });
+
+  it('stops before Docker when the renewal’s answer is lost, saying to sign in again', async () => {
+    const calls = stubFetch({
+      [`POST ${TOKEN}`]: [new DOMException('timed out', 'TimeoutError')],
+    });
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    const ctx = context(signedIn(0), fake.provider, cwd);
+    expect(
+      await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+    ).toBe(1);
+    expect(ctx.errors).toEqual([
+      "DevTune's answer to renewing the sign-in didn't arrive, so whether it was renewed is unknown. Run agentpicks login.",
+    ]);
+    expect(ctx.dockerCalls).toEqual([]);
+    expect(calls.map((c) => c.url)).toEqual([TOKEN]);
+  });
+
+  it('upload checks the sign-in with DevTune before sending anything', async () => {
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    const io = signedIn(Date.now() + 3_600_000);
+    expect(
+      await main(
+        ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+        context(io, fake.provider, cwd),
+      ),
+    ).toBe(0);
+    const calls = stubFetch({
+      [`GET ${CONNECTION}`]: [signedInConnection(['project.read'])],
+    });
+    const ctx = context(io, fake.provider, cwd);
+    expect(await main(['upload', 'agentpicks-runs'], ctx)).toBe(1);
+    expect(ctx.errors[0]).toMatch(
+      /^This sign-in can't upload runs to Acme now/,
+    );
+    expect(calls.map((c) => c.url)).toEqual([CONNECTION]);
+  });
+
+  it.each([
+    [
+      401,
+      'Invalid or expired OAuth token. Run devtune login.',
+      'Invalid or expired OAuth token. Run agentpicks login.',
+    ],
+    [
+      401,
+      'Run devtune login to reconnect and approve access.',
+      'Run agentpicks login to reconnect and approve access.',
+    ],
+    [
+      403,
+      'This sign-in is for a different project. Run devtune login and select this project.',
+      'This sign-in is for a different project. Run agentpicks login and select this project.',
+    ],
+    [
+      403,
+      'This sign-in does not allow access to "agent_picks.run" endpoints. Run devtune login again and approve agent_picks.run; if you already did, ask an account owner for access.',
+      'This sign-in does not allow access to "agent_picks.run" endpoints. Run agentpicks login again and approve agent_picks.run; if you already did, ask an account owner for access.',
+    ],
+  ])(
+    'names agentpicks login, not devtune login, when DevTune refuses the token at upload (%i)',
+    async (status, said, shown) => {
+      stubFetch({
+        [`GET ${CONNECTION}`]: [signedInConnection()],
+        [`POST ${UPLOADS}`]: [
+          { status, body: { error: 'refused', message: said } },
+        ],
+      });
+      const fake = fakeProvider({ artifacts: ARTIFACTS });
+      const ctx = context(signedIn(Date.now() + 3_600_000), fake.provider, cwd);
+      expect(
+        await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+      ).toBe(1);
+      expect(ctx.errors[0]).toBe(shown);
+      expect(ctx.errors[1]).toMatch(/^The bundle stays in /);
+    },
+  );
+
+  it('says to log in again when DevTune refuses the token without a reason', async () => {
+    stubFetch({
+      [`GET ${CONNECTION}`]: [signedInConnection()],
+      [`POST ${UPLOADS}`]: [
+        {
+          status: 401,
+          body: 'not json',
+        },
+      ],
+    });
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    const ctx = context(signedIn(Date.now() + 3_600_000), fake.provider, cwd);
+    expect(
+      await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+    ).toBe(1);
+    expect(ctx.errors[0]).toBe(
+      'DevTune refused the sign-in. Run agentpicks login again.',
+    );
+    expect(ctx.errors[1]).toMatch(/^The bundle stays in /);
+  });
 });
 
 describe('agentpicks cleanup', () => {
@@ -765,13 +1756,34 @@ describe('agentpicks cleanup', () => {
 });
 
 describe('agentpicks', () => {
+  it.each([
+    'init',
+    'run',
+    'upload',
+    'login',
+    'cleanup',
+    'list',
+    'pull',
+    'push',
+    'validate',
+    'results',
+  ])(
+    'prints usage and exits successfully for %s --help before doing any work',
+    async (command) => {
+      const ctx = context(fakeHost(), fakeProvider().provider, cwd);
+      expect(await main([command, '--help'], ctx)).toBe(0);
+      expect(ctx.lines).toEqual([USAGE]);
+      expect(ctx.errors).toEqual([]);
+    },
+  );
+
   it('prints its version, and its usage for an unknown command', async () => {
     const ctx = context(fakeHost(), fakeProvider().provider, cwd);
     expect(await main(['--version'], ctx)).toBe(0);
     expect(ctx.lines).toEqual([RUNNER.version]);
-    expect(await main(['upload'], ctx)).toBe(1);
+    expect(await main(['publish'], ctx)).toBe(1);
     expect(ctx.errors[0]).toMatch(
-      /^agentpicks has no upload command\.\n\nUsage:/,
+      /^agentpicks has no publish command\.\n\nUsage:/,
     );
   });
 });

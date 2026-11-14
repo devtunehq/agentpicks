@@ -1,0 +1,151 @@
+name: Agent Picks
+description: Run an Agent Picks setup in CI and upload each run to your DevTune project.
+author: DevTune
+
+inputs:
+  setup:
+    description: The setup to run, as agentpicks run <setup> takes it. A setup file's path in the workspace, such as agentpicks/error-tracking.yaml, or the name of a DevTune setup. Set setup or category, not both.
+    required: false
+  category:
+    description: A built-in category to run instead of a setup (--category), with stack or repo. Set setup or category, not both.
+    required: false
+  stack:
+    description: A committed starter to test (--stack), in place of the setup's stacks or repo. Set stack or repo, not both.
+    required: false
+  repo:
+    description: The path to a checked-out repository to test (--repo), such as `.`, in place of the setup's stacks or repo. Set stack or repo, not both.
+    required: false
+  runs:
+    description: How many runs, one after another (--runs). Unset, a setup runs its runs and a category 1.
+    required: false
+  agent:
+    description: The agent to test (--agent), in place of the setup's agents, or when more than one is installed on the runner. claude-code, codex, opencode or pi.
+    required: false
+  model:
+    description: The model to ask for (--model). OpenCode and Pi need one, such as anthropic/claude-sonnet-4-5.
+    required: false
+  out:
+    description: The directory bundles are written to (--out).
+    required: false
+    default: ./agentpicks-runs
+  no-upload:
+    description: Set to true to keep bundles on the runner and skip the upload (--no-upload).
+    required: false
+    default: 'false'
+  devtune-api-key:
+    description: A DevTune project API key with the Agent Picks Run scope, and Visibility for a linked setup file or a DevTune setup's name. Pass it from a secret. Needed unless no-upload is true.
+    required: false
+  devtune-project-id:
+    description: The DevTune project id runs are uploaded to. Needed unless no-upload is true.
+    required: false
+  devtune-api-base-url:
+    description: The DevTune API address, ending in /api/v2. Defaults to https://devtune.ai/api/v2. Used only with devtune-api-key or devtune-project-id.
+    required: false
+
+outputs:
+  bundle-dir:
+    description: The absolute path of the out directory, which holds one bundle directory per completed run.
+    value: ${{ steps.run.outputs.bundle-dir }}
+
+runs:
+  using: composite
+  steps:
+    - id: run
+      shell: bash
+      # Every input reaches the script through the environment, never through ${{ }} in the script,
+      # so no value can inject shell, and the DevTune key never appears on a command line.
+      env:
+        INPUT_SETUP: ${{ inputs.setup }}
+        INPUT_CATEGORY: ${{ inputs.category }}
+        INPUT_STACK: ${{ inputs.stack }}
+        INPUT_REPO: ${{ inputs.repo }}
+        INPUT_RUNS: ${{ inputs.runs }}
+        INPUT_AGENT: ${{ inputs.agent }}
+        INPUT_MODEL: ${{ inputs.model }}
+        INPUT_OUT: ${{ inputs.out }}
+        INPUT_NO_UPLOAD: ${{ inputs.no-upload }}
+        INPUT_DEVTUNE_API_KEY: ${{ inputs.devtune-api-key }}
+        INPUT_DEVTUNE_PROJECT_ID: ${{ inputs.devtune-project-id }}
+        INPUT_DEVTUNE_API_BASE_URL: ${{ inputs.devtune-api-base-url }}
+      run: |
+        set -euo pipefail
+
+        if [ -n "$INPUT_SETUP" ] && [ -n "$INPUT_CATEGORY" ]; then
+          echo "::error::Set setup or category, not both: the setup already says what to test." >&2
+          exit 1
+        fi
+        if [ -z "$INPUT_SETUP" ] && [ -z "$INPUT_CATEGORY" ]; then
+          echo "::error::Set setup to a setup file, such as agentpicks/error-tracking.yaml, or to the name of a DevTune setup. Or set category to run a built-in category." >&2
+          exit 1
+        fi
+
+        # The runner's own Node.js runs the CLI: setting one up here would change it for every
+        # later step of the job.
+        if ! command -v node >/dev/null; then
+          echo "::error::The Agent Picks action needs Node.js 20 or later on the runner, which has none. Add actions/setup-node before it." >&2
+          exit 1
+        fi
+        node_version="$(node -p 'process.versions.node')"
+        if [ "${node_version%%.*}" -lt 20 ]; then
+          echo "::error::The Agent Picks action needs Node.js 20 or later on the runner, not $node_version. Add actions/setup-node before it." >&2
+          exit 1
+        fi
+
+        # The DevTune values come from the inputs or from the environment, never a mix: with the
+        # key or project input set, all three come from the inputs and an empty one is unset. An
+        # upload needs both, or the CLI would fill the other from a login saved on the runner.
+        if [ -n "$INPUT_DEVTUNE_API_KEY" ] || [ -n "$INPUT_DEVTUNE_PROJECT_ID" ]; then
+          if [ "$INPUT_NO_UPLOAD" != true ] && { [ -z "$INPUT_DEVTUNE_API_KEY" ] || [ -z "$INPUT_DEVTUNE_PROJECT_ID" ]; }; then
+            echo "::error::Set both devtune-api-key and devtune-project-id, or neither. One of them is empty; check the secret or variable it reads." >&2
+            exit 1
+          fi
+          unset DEVTUNE_API_KEY DEVTUNE_PROJECT_ID DEVTUNE_API_BASE_URL
+          if [ -n "$INPUT_DEVTUNE_API_KEY" ]; then export DEVTUNE_API_KEY="$INPUT_DEVTUNE_API_KEY"; fi
+          if [ -n "$INPUT_DEVTUNE_PROJECT_ID" ]; then export DEVTUNE_PROJECT_ID="$INPUT_DEVTUNE_PROJECT_ID"; fi
+          if [ -n "$INPUT_DEVTUNE_API_BASE_URL" ]; then export DEVTUNE_API_BASE_URL="$INPUT_DEVTUNE_API_BASE_URL"; fi
+        fi
+
+        # The CLI version is the one in this ref's package.json: a release tag always runs the
+        # same one, while a branch moves to each version the mirror syncs.
+        version="$(node -p 'require(process.env.GITHUB_ACTION_PATH + "/package.json").version')"
+
+        # Paths resolve against the workspace, as the CLI resolves them, because npx runs elsewhere.
+        out="$(node -p 'require("node:path").resolve(process.env.INPUT_OUT)')"
+        # A setup with a slash or a YAML extension is a file, as the CLI tells them apart. Any other
+        # names a DevTune setup: npx runs outside the checkout, where the CLI finds no file by name,
+        # so a name that is also a file in the workspace is refused rather than run from DevTune.
+        if [ -n "$INPUT_SETUP" ]; then
+          case "$INPUT_SETUP" in
+            */* | *\\* | *.yaml | *.yml)
+              args=("$(node -p 'require("node:path").resolve(process.env.INPUT_SETUP)')") ;;
+            *)
+              for file in "agentpicks/$INPUT_SETUP.yaml" "agentpicks/$INPUT_SETUP.yml"; do
+                if [ -e "$file" ] || [ -L "$file" ]; then
+                  echo "::error::A setup name runs the DevTune setup of that name, and the workspace has $file. To run the file, set setup: $file." >&2
+                  exit 1
+                fi
+              done
+              args=("$INPUT_SETUP") ;;
+          esac
+        else
+          args=(--category "$INPUT_CATEGORY")
+        fi
+        args+=(--out "$out")
+        if [ -n "$INPUT_STACK" ]; then args+=(--stack "$INPUT_STACK"); fi
+        if [ -n "$INPUT_REPO" ]; then args+=(--repo "$(node -p 'require("node:path").resolve(process.env.INPUT_REPO)')"); fi
+        if [ -n "$INPUT_RUNS" ]; then args+=(--runs "$INPUT_RUNS"); fi
+        if [ -n "$INPUT_AGENT" ]; then args+=(--agent "$INPUT_AGENT"); fi
+        if [ -n "$INPUT_MODEL" ]; then args+=(--model "$INPUT_MODEL"); fi
+        case "$INPUT_NO_UPLOAD" in
+          true) args+=(--no-upload) ;;
+          false) ;;
+          *) echo "::error::no-upload takes true or false, not $INPUT_NO_UPLOAD." >&2; exit 1 ;;
+        esac
+
+        # Set before the run, so a step that fails part way still names where its bundles are.
+        echo "bundle-dir=$out" >> "$GITHUB_OUTPUT"
+
+        # npx runs outside the checkout, so an .npmrc in the tested repository can't choose the
+        # registry or the shell npm runs with while the step holds the DevTune and agent keys.
+        cd "${RUNNER_TEMP:-$(mktemp -d)}"
+        npx --yes "@devtune/agentpicks@$version" run "${args[@]}"

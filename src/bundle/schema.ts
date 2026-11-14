@@ -38,6 +38,13 @@ export const bundleArtifactSchema = z.object({
   name: artifactName,
   bytes: z.number().int().nonnegative(),
   sha256,
+  /** Byte counts after redaction, before and after whole-line trimming for upload. Older readers ignore this field. */
+  truncation: z
+    .object({
+      originalBytes: z.number().int().nonnegative(),
+      keptBytes: z.number().int().nonnegative(),
+    })
+    .optional(),
 });
 
 /**

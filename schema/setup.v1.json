@@ -1,0 +1,521 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "description": "The DevTune setup this file is linked to.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100
+    },
+    "synced": {
+      "description": "What agentpicks pull or push last saw: the DevTune setup's snapshot digest (setup) and this file's content digest (file). agentpicks writes it; leave it as it is.",
+      "type": "object",
+      "properties": {
+        "setup": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "file": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "required": ["setup", "file"],
+      "additionalProperties": false
+    },
+    "from": {
+      "description": "A built-in category whose job, requests and tools the setup inherits.",
+      "type": "string",
+      "enum": [
+        "authentication",
+        "payments",
+        "transactional-email",
+        "databases",
+        "error-tracking",
+        "ci"
+      ]
+    },
+    "job": {
+      "description": "The job line, which labels the setup; a run asks requests.add. Required without from.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300,
+      "pattern": "^[^\\n\\r]+$"
+    },
+    "requests": {
+      "description": "One request per intent. A run asks the add request, which a setup without from must give. With from, null leaves out the category's request of that intent.",
+      "type": "object",
+      "properties": {
+        "add": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 300,
+              "pattern": "^[^\\n\\r]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "recommend": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 300,
+              "pattern": "^[^\\n\\r]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hosted": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 300,
+              "pattern": "^[^\\n\\r]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "improve": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 300,
+              "pattern": "^[^\\n\\r]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "tools": {
+      "description": "Your tool and its competitors: a tool key of the from category, or a full entry with key, name and signals, and optionally domain.",
+      "type": "object",
+      "properties": {
+        "own": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 63,
+              "pattern": "^[a-z0-9]+(?:[-_.][a-z0-9]+)*$"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "maxLength": 63,
+                  "pattern": "^[a-z0-9]+(?:[-_.][a-z0-9]+)*$"
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "domain": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 253,
+                  "pattern": "^[a-z0-9-]+(?:\\.[a-z0-9-]+)+$"
+                },
+                "signals": {
+                  "type": "object",
+                  "properties": {
+                    "packages": {
+                      "type": "object",
+                      "properties": {
+                        "npm": {
+                          "maxItems": 40,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 214,
+                            "pattern": "^[A-Za-z0-9@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
+                          }
+                        },
+                        "pypi": {
+                          "maxItems": 40,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 214,
+                            "pattern": "^[A-Za-z0-9@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
+                          }
+                        },
+                        "gem": {
+                          "maxItems": 40,
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 214,
+                            "pattern": "^[A-Za-z0-9@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
+                          }
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "configNames": {
+                      "maxItems": 30,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 2,
+                        "maxLength": 100,
+                        "pattern": "^[A-Za-z0-9@._/:*][A-Za-z0-9@._/:*-]*$"
+                      }
+                    },
+                    "importPatterns": {
+                      "maxItems": 20,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      }
+                    },
+                    "brandDomains": {
+                      "maxItems": 10,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 3,
+                        "maxLength": 253,
+                        "pattern": "^[a-z0-9-]+(?:\\.[a-z0-9-]+)+$"
+                      }
+                    },
+                    "aliases": {
+                      "maxItems": 20,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 100
+                      }
+                    },
+                    "commandPatterns": {
+                      "maxItems": 10,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      }
+                    },
+                    "configFiles": {
+                      "maxItems": 10,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      }
+                    },
+                    "configPatterns": {
+                      "maxItems": 10,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      }
+                    },
+                    "selfHosted": {
+                      "maxItems": 10,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      }
+                    },
+                    "frameworkBuiltIn": {
+                      "type": "boolean"
+                    },
+                    "yieldsTo": {
+                      "maxItems": 40,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 63,
+                        "pattern": "^[a-z0-9]+(?:[-_.][a-z0-9]+)*$"
+                      }
+                    },
+                    "receivesFrom": {
+                      "maxItems": 40,
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "maxLength": 63,
+                        "pattern": "^[a-z0-9]+(?:[-_.][a-z0-9]+)*$"
+                      }
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "required": ["key", "name", "signals"],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "competitors": {
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 63,
+                "pattern": "^[a-z0-9]+(?:[-_.][a-z0-9]+)*$"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "key": {
+                    "type": "string",
+                    "maxLength": 63,
+                    "pattern": "^[a-z0-9]+(?:[-_.][a-z0-9]+)*$"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "domain": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 253,
+                    "pattern": "^[a-z0-9-]+(?:\\.[a-z0-9-]+)+$"
+                  },
+                  "signals": {
+                    "type": "object",
+                    "properties": {
+                      "packages": {
+                        "type": "object",
+                        "properties": {
+                          "npm": {
+                            "maxItems": 40,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 214,
+                              "pattern": "^[A-Za-z0-9@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
+                            }
+                          },
+                          "pypi": {
+                            "maxItems": 40,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 214,
+                              "pattern": "^[A-Za-z0-9@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
+                            }
+                          },
+                          "gem": {
+                            "maxItems": 40,
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 214,
+                              "pattern": "^[A-Za-z0-9@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
+                            }
+                          }
+                        },
+                        "additionalProperties": false
+                      },
+                      "configNames": {
+                        "maxItems": 30,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 2,
+                          "maxLength": 100,
+                          "pattern": "^[A-Za-z0-9@._/:*][A-Za-z0-9@._/:*-]*$"
+                        }
+                      },
+                      "importPatterns": {
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "brandDomains": {
+                        "maxItems": 10,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 3,
+                          "maxLength": 253,
+                          "pattern": "^[a-z0-9-]+(?:\\.[a-z0-9-]+)+$"
+                        }
+                      },
+                      "aliases": {
+                        "maxItems": 20,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        }
+                      },
+                      "commandPatterns": {
+                        "maxItems": 10,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "configFiles": {
+                        "maxItems": 10,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "configPatterns": {
+                        "maxItems": 10,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "selfHosted": {
+                        "maxItems": 10,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        }
+                      },
+                      "frameworkBuiltIn": {
+                        "type": "boolean"
+                      },
+                      "yieldsTo": {
+                        "maxItems": 40,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "maxLength": 63,
+                          "pattern": "^[a-z0-9]+(?:[-_.][a-z0-9]+)*$"
+                        }
+                      },
+                      "receivesFrom": {
+                        "maxItems": 40,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "maxLength": 63,
+                          "pattern": "^[a-z0-9]+(?:[-_.][a-z0-9]+)*$"
+                        }
+                      }
+                    },
+                    "additionalProperties": false
+                  }
+                },
+                "required": ["key", "name", "signals"],
+                "additionalProperties": false
+              }
+            ]
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "stacks": {
+      "description": "Starter apps to test in. Give stacks or repo, not both.",
+      "minItems": 1,
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "empty",
+          "nextjs",
+          "nextjs-noinstr",
+          "nextjs-supabase",
+          "nextjs-github-actions",
+          "tanstack",
+          "sveltekit",
+          "express",
+          "fastapi",
+          "rails",
+          "fastapi-aws",
+          "rails-own-servers-eu"
+        ]
+      }
+    },
+    "repo": {
+      "description": "Your repository, relative to the repository root this file is in, in place of stacks: a path, or a path and a commit (ref).",
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "ref": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": ["path"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "agents": {
+      "description": "The agents to test, each installed on the machine that runs it. Without agents, the one installed agent runs.",
+      "minItems": 1,
+      "maxItems": 4,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["claude-code", "codex", "opencode", "pi"]
+      }
+    },
+    "runs": {
+      "description": "How many runs per agent and stack. Default 1.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    }
+  },
+  "additionalProperties": false,
+  "title": "Agent Picks setup",
+  "description": "What agentpicks run tests: a job, its requests, your tool and its competitors, stacks or your repository, agents and runs. See https://www.npmjs.com/package/@devtune/agentpicks."
+}
