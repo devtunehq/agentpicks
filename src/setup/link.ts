@@ -6,8 +6,6 @@
  * tool neither yours nor a competitor) stays in DevTune, and push keeps it. A tool from DevTune's
  * catalogue comes by key, in a job or a copy, since DevTune doesn't send its signals.
  */
-import { createHash } from 'node:crypto';
-
 import { stringify } from 'yaml';
 
 import { findCategoryRequests } from '../catalogue/categories';
@@ -20,36 +18,11 @@ import {
 import { PROMPT_INTENTS } from '../catalogue/prompt-intents';
 import type { DevtuneSetup } from '../cli/devtune-setups';
 import { SELF_RUN_AGENTS } from '../cli/self-run-agents';
+import { fileDigest } from './digest';
 import { resolveSetup } from './resolve';
 import { SETUP_AGENTS, setupFileSchema, type SetupFile } from './schema';
 
-/** Fields that stay on this machine: DevTune setups test stacks, and a run's count is the runner's. */
-const LOCAL_ONLY = ['id', 'synced', 'repo', 'runs'] as const;
-
-/** JSON with keys sorted at every depth, so a digest doesn't depend on the order a file lists them in. */
-export function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
-  if (value && typeof value === 'object')
-    return `{${Object.keys(value)
-      .filter((key) => (value as Record<string, unknown>)[key] !== undefined)
-      .sort()
-      .map(
-        (key) =>
-          `${JSON.stringify(key)}:${canonical((value as Record<string, unknown>)[key])}`,
-      )
-      .join(',')}}`;
-  return JSON.stringify(value);
-}
-
-/**
- * The digest of what a file says DevTune holds: its parsed content without id, synced, repo and
- * runs, so formatting, comments and local-only fields don't count as a change.
- */
-export function fileDigest(file: SetupFile): string {
-  const content: Record<string, unknown> = { ...file };
-  for (const key of LOCAL_ONLY) delete content[key];
-  return createHash('sha256').update(canonical(content)).digest('hex');
-}
+export { canonical, fileDigest } from './digest';
 
 /**
  * A linked file's state against its DevTune setup: in_sync, local_changed, devtune_changed,
@@ -261,13 +234,23 @@ export function devtuneSetupFile(
   return { file: parsed.data };
 }
 
-/** Whether a DevTune setup, written as a file, passes the file's checks against the tools it holds. */
+/**
+ * Whether a DevTune setup, written as a file, passes the file's checks against the tools it holds, as the file pull
+ * writes: linked to it and in sync, so it may keep what DevTune holds, such as a public board's competitors or a
+ * job's shorter line.
+ */
 export function devtuneSetupProblems(
   setup: DevtuneSetup,
   name: string,
   file: SetupFile,
 ) {
-  const resolved = resolveSetup(name, file, setup.tools);
+  const { id: _id, synced: _synced, ...content } = file;
+  const pulled: SetupFile = {
+    ...content,
+    id: setup.id,
+    synced: { setup: setup.snapshot_digest, file: fileDigest(content) },
+  };
+  const resolved = resolveSetup(name, pulled, setup.tools);
   return 'setup' in resolved ? [] : resolved.problems;
 }
 

@@ -22,6 +22,7 @@ import { bundleManifestSchema } from '../bundle/schema';
 import type { SandboxPlatform } from '../sandbox/platform';
 import type { Sandbox, SandboxProvider } from '../sandbox/provider';
 import { readSetupFile } from '../setup/files';
+import { PACKAGE_NAME_MESSAGE } from '../setup/rules';
 import {
   categoryPlan,
   parseRunArgs,
@@ -602,7 +603,7 @@ describe('agentpicks validate', () => {
       expect.stringMatching(
         /^agentpicks\/dupe\.yaml: line 2: Map keys must be unique\. Fix the YAML there\.$/,
       ),
-      'agentpicks/flags.yaml: tools.own.signals.packages.npm[0]: A package name holds a letter or digit, and no spaces, quotes, $ or backticks. End it with / or * to match a prefix.',
+      `agentpicks/flags.yaml: tools.own.signals.packages.npm[0]: ${PACKAGE_NAME_MESSAGE}`,
       'agentpicks/flags.yaml: agents[0]: Use an agent: claude-code, codex, opencode, pi.',
     ]);
   });

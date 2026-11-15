@@ -3,11 +3,13 @@
  * inherits a built-in category's job, requests and early stop; a tool key must be a tool of DevTune's
  * catalogue (one this version knows, or one the linked DevTune setup holds without signals), whose
  * signals DevTune holds, so a run here recognises it only through its `from` category's early stop,
- * and a copy names one its category doesn't measure only once the copy holds it; full tool entries add their package and config names to the early stop, as
- * a job's tools do in a managed run; stacks must run in the category, or in any job without one. A
- * setup that is its category as published (no requests or tools of its own) uploads as that
- * category; any other is custom. The app's rules hold too: no `yieldsTo` loop, and no request naming a tool it measures.
- * Every problem names the field and the fix.
+ * and a copy names one its category doesn't measure only once the copy holds it; full tool entries
+ * add their package and config names to the early stop, as a job's tools do in a managed run, and an
+ * entry with none adds nothing; stacks must run in the category, or in any job without one. A setup
+ * that is its category as published (no requests or tools of its own) uploads as that category; any
+ * other is custom. The rules DevTune's saves share (`rules.ts`) hold too: the tool limit, no
+ * `yieldsTo` loop and the request guard, and no request naming a tool it measures. Every problem
+ * names the field and the fix.
  */
 import {
   CATEGORY_REQUESTS,
@@ -24,12 +26,18 @@ import {
   type EnvironmentDefinition,
 } from '../catalogue/environments';
 import { PROMPT_INTENTS } from '../catalogue/prompt-intents';
+import { fileDigest } from './digest';
 import {
-  SETUP_MAX_OWN_SIGNAL_TOOLS,
-  type SetupFile,
-  type SetupToolEntry,
-  type SetupToolRef,
-} from './schema';
+  CATALOGUE_TOOL_KEYS,
+  hasYieldsCycle,
+  jobLineProblem,
+  REQUEST_PROBLEM_MESSAGES,
+  requestProblem,
+  SETUP_MAX_COMPETITORS,
+  TEXT_PROBLEM_MESSAGES,
+  setupMaxTools,
+} from './rules';
+import type { SetupFile, SetupToolEntry, SetupToolRef } from './schema';
 
 /** A problem with one field of a setup file; `field` is its path, such as `tools.competitors[1]`. */
 export interface SetupProblem {
@@ -79,9 +87,6 @@ export interface HeldTool {
   display_name: string;
   signals: Record<string, unknown> | null;
 }
-
-/** Every tool key in DevTune's catalogue that this version knows. */
-const CATALOGUE_KEYS = new Set(Object.values(CATEGORY_TOOLS).flat());
 
 /** A watcher pattern that never matches: its input is normalised to have no underscores. */
 export const NEVER_PATTERN = '__no-pick__';
@@ -135,11 +140,6 @@ export function resolveSetup(
   const catalogueKeys = file.from ? (CATEGORY_TOOLS[file.from] ?? []) : [];
   for (const { ref, field } of tools) {
     if (typeof ref !== 'string') {
-      if (!hasSignal(ref))
-        problems.push({
-          field: `${field}.signals`,
-          message: `Give ${ref.name} at least one package, config name or pattern, so a run can recognise it.`,
-        });
       if (catalogueKeys.includes(ref.key))
         problems.push({
           field: `${field}.key`,
@@ -150,13 +150,13 @@ export function resolveSetup(
     const row = held?.find((each) => each.tool_key === ref);
     if (file.from) {
       // A copy measures another catalogue tool only once it is added in the DevTune app.
-      const unchecked = !held && file.id && CATALOGUE_KEYS.has(ref);
+      const unchecked = !held && file.id && CATALOGUE_TOOL_KEYS.has(ref);
       if (!catalogueKeys.includes(ref) && !row && !unchecked)
         problems.push({
           field,
           message: `${file.from} has no tool ${ref}. Use one of ${catalogueKeys.join(', ')}, or add ${ref} to a category copy in the DevTune app, then run agentpicks pull.`,
         });
-    } else if (!CATALOGUE_KEYS.has(ref) && row?.signals !== null)
+    } else if (!CATALOGUE_TOOL_KEYS.has(ref) && row?.signals !== null)
       problems.push({
         field,
         message: row
@@ -167,10 +167,19 @@ export function resolveSetup(
   const entries = tools.flatMap(({ ref }) =>
     typeof ref === 'string' ? [] : [ref],
   );
-  if (entries.length > SETUP_MAX_OWN_SIGNAL_TOOLS)
+  // A new setup is a customer's, which tracks at most six competitors; a linked one may hold what DevTune holds, as a
+  // public board's every tool, and push checks it against that setup.
+  const competitors = file.tools?.competitors?.length ?? 0;
+  if (!file.id && competitors > SETUP_MAX_COMPETITORS)
+    problems.push({
+      field: 'tools.competitors',
+      message: `A setup tracks at most ${SETUP_MAX_COMPETITORS} competitors; it has ${competitors}.`,
+    });
+  const maxTools = setupMaxTools(file.from ?? null);
+  if (tools.length > maxTools)
     problems.push({
       field: 'tools',
-      message: `A setup holds at most ${SETUP_MAX_OWN_SIGNAL_TOOLS} tools with their own signals; it has ${entries.length}.`,
+      message: `A setup ${file.from ? `from ${file.from} ` : ''}holds at most ${maxTools} tools; it has ${tools.length}.`,
     });
   const keys = tools.map(({ ref }) =>
     typeof ref === 'string' ? ref : ref.key,
@@ -181,20 +190,39 @@ export function resolveSetup(
       field: 'tools',
       message: `${repeated} is listed more than once. List each tool once, as own or as a competitor.`,
     });
-  if (hasYieldsCycle(entries))
+  if (
+    hasYieldsCycle(
+      entries.map((tool) => ({
+        toolKey: tool.key,
+        yieldsTo: tool.signals.yieldsTo,
+      })),
+    )
+  )
     problems.push({
       field: 'tools',
       message:
         "Tools' yieldsTo loop back on themselves, so no run could be classified. Remove a yieldsTo from the loop.",
     });
-  for (const [field, text] of [
-    ['job', file.job] as const,
-    ...PROMPT_INTENTS.map(
-      (intent) => [`requests.${intent}`, file.requests?.[intent]] as const,
-    ),
-  ]) {
-    const refusal = text == null ? undefined : requestRefusal(text);
-    if (refusal) problems.push({ field, message: refusal });
+  // A linked file unchanged since pull or push still says the job line DevTune holds, which DevTune's save keeps, as it
+  // keeps a setup from a category its name; any other line, an edited one included, is new.
+  const unchanged =
+    file.id !== undefined &&
+    file.synced !== undefined &&
+    fileDigest(file) === file.synced.file;
+  const jobProblem =
+    file.job === undefined
+      ? null
+      : jobLineProblem(file.job, [unchanged ? file.job : null, category?.name]);
+  if (jobProblem)
+    problems.push({ field: 'job', message: TEXT_PROBLEM_MESSAGES[jobProblem] });
+  for (const intent of PROMPT_INTENTS) {
+    const text = file.requests?.[intent];
+    const problem = text == null ? null : requestProblem(text);
+    if (problem)
+      problems.push({
+        field: `requests.${intent}`,
+        message: REQUEST_PROBLEM_MESSAGES[problem],
+      });
   }
   for (const intent of PROMPT_INTENTS) {
     const text = file.requests?.[intent];
@@ -279,19 +307,6 @@ export function resolveSetup(
     ...catalogueKeys,
     ...keys,
   ]);
-  // A tool by key has no signals here, so a setup with one can't need its entries to stop early.
-  if (
-    !file.from &&
-    entries.length > 0 &&
-    unrecognised.length === 0 &&
-    earlyStop.installPattern === NEVER_PATTERN &&
-    earlyStop.codePattern === NEVER_PATTERN
-  )
-    problems.push({
-      field: 'tools',
-      message:
-        "Give at least one tool a package or config name under signals, so a run can tell that a pick landed. A tool that yields to another tool in the setup doesn't count.",
-    });
 
   if (problems.length > 0) return { problems };
 
@@ -333,21 +348,6 @@ function toolRefs(file: SetupFile): { ref: SetupToolRef; field: string }[] {
       field: `tools.competitors[${i}]`,
     })),
   ];
-}
-
-function hasSignal(entry: SetupToolEntry): boolean {
-  const s = entry.signals;
-  return [
-    s.packages?.npm,
-    s.packages?.pypi,
-    s.packages?.gem,
-    s.configNames,
-    s.importPatterns,
-    s.commandPatterns,
-    s.configFiles,
-    s.configPatterns,
-    s.selfHosted,
-  ].some((list) => (list?.length ?? 0) > 0);
 }
 
 /**
@@ -432,53 +432,6 @@ export function mergeEarlyStop(
     codePattern: join(base?.codePattern, configNames),
     ...(base?.pathPattern ? { pathPattern: base.pathPattern } : {}),
   };
-}
-
-/**
- * Whether the tools' `yieldsTo` loop back on themselves, through any number of tools, a tool
- * yielding to itself included, as the app refuses. Keys of tools not in the list are ignored.
- */
-function hasYieldsCycle(entries: readonly SetupToolEntry[]): boolean {
-  const edges = new Map(
-    entries.map((tool) => [tool.key, tool.signals.yieldsTo ?? []]),
-  );
-  const done = new Set<string>();
-  const visiting = new Set<string>();
-  const cycles = (key: string): boolean => {
-    if (visiting.has(key)) return true;
-    if (done.has(key) || !edges.has(key)) return false;
-    visiting.add(key);
-    const found = edges.get(key)!.some(cycles);
-    visiting.delete(key);
-    done.add(key);
-    return found;
-  };
-  return entries.some((tool) => cycles(tool.key));
-}
-
-/**
- * Shapes DevTune refuses in a job line or request (`requestProblem` in the app): a link or domain, code characters
- * or an environment reference, and an env-style name. An agent reads a request as an instruction, with keys in its
- * environment. Words aren't refused: a job can be about secrets.
- */
-const REQUEST_REFUSALS: readonly [RegExp, string][] = [
-  [
-    /https?:\/\/|\bwww\.|\b[a-z0-9-]+\.(?:com|io|dev|ai|net|org|app|co|sh|xyz)\b/iu,
-    'It holds a link or domain, which DevTune refuses in a request. Name the job without it.',
-  ],
-  [
-    /[$`|<>{};\\]|\b(?:process\.env|os\.environ|getenv|printenv|ENV\[)/iu,
-    'It holds code characters or an environment reference, which DevTune refuses in a request. Describe the job in words.',
-  ],
-  [
-    /\b[A-Z][A-Z0-9]*_[A-Z0-9_]+\b/u,
-    'It holds an environment variable name, which DevTune refuses in a request. Describe the job in words.',
-  ],
-];
-
-/** Why DevTune would refuse the job line or request, or undefined when it takes it. */
-function requestRefusal(text: string): string | undefined {
-  return REQUEST_REFUSALS.find(([pattern]) => pattern.test(text))?.[1];
 }
 
 /** The words that name a full entry, as the app's `names_tool` rail reads them: its name, aliases and domains. */

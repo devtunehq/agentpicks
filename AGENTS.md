@@ -4,8 +4,8 @@ The open Agent Picks runner, published to npm as `@devtune/agentpicks`. Read `RE
 
 ## Publishing
 
-- Publish with `pnpm publish` from this directory, never `npm publish`. pnpm applies `publishConfig`, which replaces the source entry points in `exports` with `./package.json` only; npm would publish `./src/*.ts` paths the tarball doesn't contain.
-- Check the tarball first with `pnpm pack`: it should hold `dist/cli.js`, its legal notice, `docker/Dockerfile`, `schema/setup.v1.json`, `LICENSE`, `package.json` and `README.md`.
+- Release through the npm release pipeline, never a local publish: merge the version bump, push the tag `agentpicks-v<version>` on that commit, and a maintainer approves the staged package with npm 2FA. `docs/runbooks/npm-packages.md` § Agent Picks has the steps, including the mirror sync after approval.
+- The pipeline packs with `pnpm pack`, which applies `publishConfig`: it replaces the source entry points in `exports` with `./package.json` only, where npm would ship `./src/*.ts` paths the tarball doesn't contain. It refuses a tarball holding anything but `dist/cli.js`, its legal notice, `docker/Dockerfile`, `schema/setup.v1.json`, `LICENSE`, `package.json` and `README.md`; a new file in `files` needs that list updated in `.depot/workflows/npm-release.yml`.
 
 ## The GitHub Action
 

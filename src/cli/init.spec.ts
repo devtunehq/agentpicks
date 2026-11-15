@@ -19,7 +19,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parse } from 'yaml';
 
+import { CATEGORY_TOOLS } from '../catalogue/category-tools.generated';
 import { readSetupFile } from '../setup/files';
+import { SETUP_MAX_COMPETITORS } from '../setup/rules';
 import { categoryPlan, parseRunArgs, setupPlan, type RunPlan } from './args';
 import { refused, stubFetch, TARGET } from './fake-devtune';
 import { fakeHost } from './fake-host';
@@ -298,6 +300,32 @@ describe('agentpicks init --yes', () => {
 });
 
 describe('the wizard', () => {
+  it('asks again for competitors when more are listed than a setup tracks', async () => {
+    nextApp();
+    const rivals = CATEGORY_TOOLS.payments!.filter((key) => key !== 'stripe');
+    const { ctx, questions, errors } = context(MACHINE(), [
+      '2',
+      'stripe',
+      rivals.slice(0, SETUP_MAX_COMPETITORS + 1).join(', '),
+      rivals.slice(0, 2).join(', '),
+      'nextjs',
+      'codex',
+      '1',
+      'checkout',
+    ]);
+    expect(await main(['init'], ctx)).toBe(0);
+    expect(
+      questions.filter((question) => question.startsWith('Competitors')),
+    ).toHaveLength(2);
+    expect(errors[0]).toBe(
+      `List at most ${SETUP_MAX_COMPETITORS} competitors, or all.`,
+    );
+    expect(setup('checkout').tools).toEqual({
+      own: 'stripe',
+      competitors: rivals.slice(0, 2),
+    });
+  });
+
   it('writes the answers given, offering each detected default', async () => {
     nextApp();
     const { ctx, questions, errors } = context(MACHINE(), [

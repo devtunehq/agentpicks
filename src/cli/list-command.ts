@@ -93,7 +93,12 @@ function linkedTable(
         const mapped = devtuneSetupFile(setup);
         if ('problem' in mapped)
           return { name, cells: null, problem: mapped.problem };
-        const resolved = resolveSetup(name, mapped.file, setup.tools);
+        // As a file linked to it, which may keep what DevTune holds.
+        const resolved = resolveSetup(
+          name,
+          { ...mapped.file, id: setup.id },
+          setup.tools,
+        );
         if (!('setup' in resolved)) {
           const [first] = resolved.problems;
           return {

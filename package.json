@@ -1,6 +1,6 @@
 {
   "name": "@devtune/agentpicks",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "The open Agent Picks runner: the agentpicks CLI, which tests the coding agents installed on your machine in fresh Docker containers, and the sandbox code DevTune runs its managed tests on",
   "license": "Apache-2.0",
   "engines": {
@@ -23,7 +23,9 @@
   ],
   "exports": {
     ".": "./src/index.ts",
-    "./sandbox/docker": "./src/sandbox/docker.ts"
+    "./sandbox/docker": "./src/sandbox/docker.ts",
+    "./setup/rules": "./src/setup/rules.ts",
+    "./setup/pattern-rules": "./src/setup/pattern-rules.ts"
   },
   "scripts": {
     "build:cli": "node scripts/build.mjs",

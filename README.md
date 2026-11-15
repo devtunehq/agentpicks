@@ -195,11 +195,11 @@ runs: 3
 
 | Field | |
 |---|---|
-| `job` | The job line, which labels the setup; a run asks `requests.add`. Required without `from`. |
+| `job` | The job line, one line of up to 300 characters, which labels the setup; a run asks `requests.add`. A new job line is at least 8 characters; a file linked to a DevTune job may keep the shorter line that job is saved with. Required without `from`. |
 | `from` | A built-in category, as `--category` takes it. The setup inherits its job, requests and tools. |
 | `requests` | One request per intent: `add`, `recommend`, `hosted` and `improve`, each one line of 8 to 300 characters that names none of the setup's own tools. A run asks `add`, which a setup without `from` must give. With `from`, `null` leaves out the category's request of that intent, except `add`. |
-| `tools` | `own`, your tool, and `competitors`. Each is the key of a tool in DevTune's catalogue (`sentry`), or a full entry: `key`, `name` and `signals`, and optionally `domain`. A full entry's key can't be one of the `from` category's. A setup without `from` needs at least one tool and, when it gives any tool its own signals, a package or config name on one that doesn't yield to another tool in the setup. A setup from a category that names a catalogue tool its category doesn't measure is custom. |
-| `signals` | How a tool is recognised: `packages` by `npm`, `pypi` or `gem` (a name ending in `*` matches every package that starts with the text before the `*`, and one ending in `/` every package under that scope or path, so `@acme/` matches `@acme/flags`), `configNames` (environment variable names or API hosts, not starting with `-`), and `importPatterns`, `configFiles`, `configPatterns`, `commandPatterns`, `selfHosted` (patterns of up to 200 characters that RE2 compiles), `aliases`, `brandDomains`, `frameworkBuiltIn`, `yieldsTo` and `receivesFrom`. Give at least one package, config name or pattern. Tools can't yield to each other in a loop. |
+| `tools` | `own`, your tool, and `competitors`. Each is the key of a tool in DevTune's catalogue (`sentry`), or a full entry: `key`, `name` and `signals`, and optionally `domain`. A full entry's key can't be one of the `from` category's. Your setup lists up to six `competitors`; a file pulled from one of DevTune's public boards may list every tool the board ranks. A setup without `from` needs at least one tool and holds at most seven; a setup `from` a category holds its category's tools plus seven. A setup from a category that names a catalogue tool its category doesn't measure is custom. |
+| `signals` | How a tool is recognised: `packages` by `npm`, `pypi` or `gem` (a name ending in `*` matches every package that starts with the text before the `*`, and one ending in `/` every package under that scope or path, so `@acme/` matches `@acme/flags`), `configNames` (environment variable names or API hosts, not starting with `-`), and `importPatterns`, `configFiles`, `configPatterns`, `commandPatterns`, `selfHosted` (patterns of up to 200 characters that RE2 compiles), `aliases`, `brandDomains`, `frameworkBuiltIn`, `yieldsTo` and `receivesFrom`. A tool can give only `aliases` and `brandDomains`: DevTune recognizes it when an agent names it as its pick, and the early stop doesn't watch for it. Tools can't yield to each other in a loop. |
 | `stacks` | Starter apps to test in, as `--stack` takes them, each once. A setup without `from` can't use `nextjs-github-actions`, `fastapi-aws` or `rails-own-servers-eu`, which run in some categories only or carry a deploy context. |
 | `repo` | Your repository, in place of `stacks`: a path relative to the repository root, such as `.`, or `path` and `ref`. |
 | `agents` | `claude-code`, `codex`, `opencode` or `pi`, each once and installed on the machine that runs it. Without `agents`, the one agent installed runs. |
@@ -215,7 +215,7 @@ agentpicks run agentpicks/feature-flags.yaml --agent codex --runs 1 --no-upload
 agentpicks run
 ```
 
-`agentpicks run <setup>` takes the setup's name or the path of its file. Each run asks the setup's `add` request, once per agent and stack. Claude Code's early stop watches for the `from` category's tools and for the package and config names of the setup's own tools; a tool that yields to another tool in the setup (`yieldsTo`) doesn't stop it, and nor does a tool named by key alone, so a setup whose tools are all named by key isn't stopped early. Flags override the file: `--stack` or `--repo` replaces its stacks or repo, `--ref` its commit, `--agent` its agents, and `--runs` its runs. `--model` sets one agent's model, so a setup with several agents needs `--agent` with it. On a terminal, `agentpicks run` with no setup and no `--category` lists the setups and asks which to run.
+`agentpicks run <setup>` takes the setup's name or the path of its file. Each run asks the setup's `add` request, once per agent and stack. Claude Code's early stop watches for the `from` category's tools and for the package and config names of the setup's own tools; a tool that yields to another tool in the setup (`yieldsTo`) doesn't stop it, and nor does a tool named by key alone or a full entry with no package or config name, so a setup whose tools are all like these isn't stopped early. Flags override the file: `--stack` or `--repo` replaces its stacks or repo, `--ref` its commit, `--agent` its agents, and `--runs` its runs. `--model` sets one agent's model, so a setup with several agents needs `--agent` with it. On a terminal, `agentpicks run` with no setup and no `--category` lists the setups and asks which to run.
 
 A setup file linked to a DevTune setup (it has an `id`) uploads under that setup. An unlinked setup `from` a category, with no requests or tool signals of its own, uploads as that category. Naming the category's tools under `tools` doesn't change that. Any other setup is custom, and can't share its name with a built-in category: until `agentpicks push` saves it to DevTune, `run` refuses to start it without `--no-upload`, and `upload` refuses its bundles. A run of a linked file whose DevTune setup is gone is refused before it starts, and so is a run of a linked file with changes not pushed (push it first) or whose DevTune setup changed since the file last saw it (pull it first). DevTune refuses an upload whose prompt isn't its setup's current request, as `prompt_mismatch`. With `--no-upload`, such a run's bundles record the unpushed changes, and `upload` refuses them.
 
@@ -225,7 +225,7 @@ agentpicks validate
 agentpicks validate feature-flags agentpicks/error-tracking.yaml
 ```
 
-`agentpicks list` prints each setup's name, job, `from`, stacks or repo, agents and runs, and flags a file that fails its checks. Signed in, it also lists the project's DevTune setups, with where each setup is (`local`, `DevTune` or `both`) and, for a linked file, whether it is in sync or which side changed. `agentpicks validate` checks every setup file, or the ones named, against the schema and the catalogue: a known `from`, tool keys in DevTune's catalogue, stacks it runs in, known agents, signals for every full tool entry, and the limits above. With no setup named, two files with one name, such as `x.yaml` and `x.yml`, both fail; a file named by path is checked alone, as `run <path>` runs it. It prints each problem as `file: field: fix` and exits 1 if any file fails, so CI can run it.
+`agentpicks list` prints each setup's name, job, `from`, stacks or repo, agents and runs, and flags a file that fails its checks. Signed in, it also lists the project's DevTune setups, with where each setup is (`local`, `DevTune` or `both`) and, for a linked file, whether it is in sync or which side changed. `agentpicks validate` checks every setup file, or the ones named, against the schema and the catalogue: a known `from`, tool keys in DevTune's catalogue, stacks it runs in, known agents, and the limits above. With no setup named, two files with one name, such as `x.yaml` and `x.yml`, both fail; a file named by path is checked alone, as `run <path>` runs it. It prints each problem as `file: field: fix` and exits 1 if any file fails, so CI can run it.
 
 ### DevTune setups
 
@@ -266,7 +266,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: npm install -g @anthropic-ai/claude-code@2.1.323
-      - uses: devtunehq/agentpicks@v0.4.0
+      - uses: devtunehq/agentpicks@v0.4.1
         with:
           setup: agentpicks/error-tracking.yaml
           agent: claude-code
@@ -280,7 +280,7 @@ jobs:
 
 Use a Linux runner: `ubuntu-latest` has Docker and Node.js 20 or later. Without Docker, `run` refuses; without Node.js 20 or later, the action does. The action uses the runner's Node.js and doesn't change it for later steps.
 
-Pin a release tag, such as `v0.4.0`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
+Pin a release tag, such as `v0.4.1`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
 
 | Input | Passed as |
 |---|---|
@@ -321,7 +321,7 @@ Install Docker, Node.js 20 or later and the agent, set `DEVTUNE_API_KEY`, `DEVTU
 
 ```sh
 npm install -g @anthropic-ai/claude-code@2.1.323
-npx --yes @devtune/agentpicks@0.4.0 run error-tracking --agent claude-code
+npx --yes @devtune/agentpicks@0.4.1 run error-tracking --agent claude-code
 ```
 
 ## The bundle

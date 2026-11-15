@@ -6,7 +6,17 @@
 import { describe, expect, it } from 'vitest';
 
 import { findCategoryRequests } from '../catalogue/categories';
+import { CATEGORY_TOOLS } from '../catalogue/category-tools.generated';
+import { fileDigest } from './digest';
 import { NEVER_PATTERN, resolveSetup, type ResolvedSetup } from './resolve';
+import {
+  CONFIG_NAME_MESSAGE,
+  PACKAGE_NAME_MESSAGE,
+  PATTERN_MESSAGE,
+  SETUP_MAX_COMPETITORS,
+  SETUP_MAX_TOOLS,
+  TEXT_PROBLEM_MESSAGES,
+} from './rules';
 import { setupFileSchema, type SetupFile } from './schema';
 
 const ERROR_TRACKING = findCategoryRequests('error-tracking')!;
@@ -176,7 +186,7 @@ describe('resolveSetup', () => {
     );
   });
 
-  it('refuses a custom setup no pick can stop: no package or config name a run can watch for', () => {
+  it('runs a custom setup with no package or config name to watch for, whose picks DevTune reads by name', () => {
     const watchless = {
       job: 'Add feature flags',
       requests: { add: 'Add feature flags to this app.' },
@@ -188,14 +198,10 @@ describe('resolveSetup', () => {
         },
       },
     };
-    expect(problems(watchless)).toEqual([
-      {
-        field: 'tools',
-        message: expect.stringMatching(
-          /^Give at least one tool a package or config name under signals/,
-        ),
-      },
-    ]);
+    expect(resolved('flags', watchless).earlyStop).toEqual({
+      installPattern: NEVER_PATTERN,
+      codePattern: NEVER_PATTERN,
+    });
     // A from category's own early stop still watches, so the same tool is fine there.
     expect(
       resolved('errors', {
@@ -280,6 +286,69 @@ describe('resolveSetup', () => {
     ]);
   });
 
+  it('caps a new setup at six competitors and a job line of 8 characters, which a linked one may exceed as DevTune holds it', () => {
+    const written = (count: number, prefix: string) =>
+      Array.from({ length: count }, (_, i) => ({
+        key: `${prefix}-${i}`,
+        name: `${prefix} ${i}`,
+        signals: { brandDomains: [`${prefix}-${i}.dev`] },
+      }));
+    const board = CATEGORY_TOOLS['error-tracking']!;
+    const tooMany = (count: number) => ({
+      field: 'tools.competitors',
+      message: `A setup tracks at most ${SETUP_MAX_COMPETITORS} competitors; it has ${count}.`,
+    });
+    expect(
+      problems({
+        job: 'Add flags',
+        requests: { add: 'Add feature flags to this app.' },
+        tools: { competitors: written(SETUP_MAX_COMPETITORS + 1, 'rival') },
+      }),
+    ).toEqual([tooMany(SETUP_MAX_COMPETITORS + 1)]);
+    expect(
+      problems({ from: 'error-tracking', tools: { competitors: board } }),
+    ).toEqual([tooMany(board.length)]);
+    // A file pulled from a public board, which ranks every tool of its category.
+    expect(
+      problems({
+        id: 'board',
+        from: 'error-tracking',
+        tools: { competitors: board },
+      }),
+    ).toEqual([]);
+    expect(
+      problems({
+        id: 'board',
+        from: 'error-tracking',
+        tools: {
+          competitors: [...board, ...written(SETUP_MAX_TOOLS + 1, 'extra')],
+        },
+      }),
+    ).toEqual([expect.objectContaining({ field: 'tools' })]);
+    // A job saved before job lines were held to a request's length.
+    const legacy = {
+      job: 'Track',
+      requests: { add: 'Track crawler visits to this app.' },
+      tools: { own: written(1, 'own')[0] },
+    };
+    expect(problems(legacy)).toEqual([
+      { field: 'job', message: TEXT_PROBLEM_MESSAGES.too_short },
+    ]);
+    // Linked and unchanged since pull, it keeps DevTune's line; edited, the line is new.
+    const pulled = {
+      ...legacy,
+      id: 'legacy',
+      synced: { setup: 'a'.repeat(64), file: fileDigest(legacy) },
+    };
+    expect(problems(pulled)).toEqual([]);
+    expect(problems({ ...pulled, job: 'Trace' })).toEqual([
+      { field: 'job', message: TEXT_PROBLEM_MESSAGES.too_short },
+    ]);
+    expect(problems({ ...legacy, id: 'legacy' })).toEqual([
+      { field: 'job', message: TEXT_PROBLEM_MESSAGES.too_short },
+    ]);
+  });
+
   it('refuses what DevTune refuses in a job line or request: a link, code characters, an env-style name', () => {
     expect(
       problems({
@@ -347,32 +416,42 @@ describe('resolveSetup', () => {
     [
       { signals: { importPatterns: ['(?=lookahead)'] } },
       'tools.own.signals.importPatterns[0]',
-      "This pattern doesn't compile on RE2, which has no lookarounds or backreferences. Rewrite it.",
+      PATTERN_MESSAGE,
     ],
     [
       { signals: { configFiles: ['x'.repeat(201)] } },
       'tools.own.signals.configFiles[0]',
-      'Too big: expected string to have <=200 characters',
+      PATTERN_MESSAGE,
     ],
     [
       { signals: { packages: { npm: ['*'] } } },
       'tools.own.signals.packages.npm[0]',
-      'A package name holds a letter or digit, and no spaces, quotes, $ or backticks. End it with / or * to match a prefix.',
+      PACKAGE_NAME_MESSAGE,
     ],
     [
       { signals: { packages: { gem: ['@/'] } } },
       'tools.own.signals.packages.gem[0]',
-      'A package name holds a letter or digit, and no spaces, quotes, $ or backticks. End it with / or * to match a prefix.',
+      PACKAGE_NAME_MESSAGE,
     ],
     [
       { signals: { configNames: ['--help'] } },
       'tools.own.signals.configNames[0]',
-      "A config name holds no spaces, quotes, $ or backticks, and doesn't start with -.",
+      CONFIG_NAME_MESSAGE,
+    ],
+    [
+      { signals: { configNames: ['K'] } },
+      'tools.own.signals.configNames[0]',
+      CONFIG_NAME_MESSAGE,
+    ],
+    [
+      { signals: { commandPatterns: [''] } },
+      'tools.own.signals.commandPatterns[0]',
+      PATTERN_MESSAGE,
     ],
     [
       { signals: { configNames: ["ACME 'KEY'"] } },
       'tools.own.signals.configNames[0]',
-      "A config name holds no spaces, quotes, $ or backticks, and doesn't start with -.",
+      CONFIG_NAME_MESSAGE,
     ],
   ])('refuses %j, naming the field', (change, field, message) => {
     const { requests, signals } = change as {
@@ -440,11 +519,6 @@ describe('resolveSetup', () => {
         message: expect.stringMatching(
           /^error-tracking has no tool nobody-errors\. Use one of sentry, .*, or add nobody-errors to a category copy in the DevTune app, then run agentpicks pull\.$/,
         ),
-      },
-      {
-        field: 'tools.competitors[0].signals',
-        message:
-          'Give Bare at least one package, config name or pattern, so a run can recognise it.',
       },
       {
         field: 'tools',

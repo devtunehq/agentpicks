@@ -1,8 +1,8 @@
 /**
  * ABOUTME: Drives `agentpicks list`, `pull`, `push` and `run <name>` against a fake DevTune: the sync
  * states of a linked file, pull and push in each, push's digest and setup_changed refusal, a new
- * file's push and its retry after a lost answer, an orphaned link, a job measuring a catalogue tool
- * by key and its runs reading Unmeasured without the tool's signals, and a linked or DevTune-only
+ * file's push and its retry after a lost answer, an orphaned link, a job whose competitor is known
+ * only by name listing as valid and round-tripping in sync, a job measuring a catalogue tool by key and its runs reading Unmeasured without the tool's signals, and a linked or DevTune-only
  * setup's runs uploading under its DevTune setup while an unlinked category setup's upload is
  * unchanged; and a signed-in `run --category` running the project's copy of the category as
  * `run <copy-name>` would, creating it first, running the copy another save made, and stopping on
@@ -470,6 +470,28 @@ describe('agentpicks pull', () => {
     const validate = context();
     expect(await main(['validate'], validate.ctx)).toBe(0);
     expect(validate.lines.at(-1)).toBe('2 of 2 setup files valid.');
+  });
+
+  it('pulls a job saved with a line shorter than a new one may be without a problem, and validate flags it once edited', async () => {
+    stubFetch({
+      [`GET ${SETUPS}`]: [setupList([{ ...jobSetup(), name: 'Trace' }])],
+    });
+    const { ctx, lines, errors } = context();
+    expect(await main(['pull'], ctx)).toBe(0);
+    expect(errors).toEqual([]);
+    expect(lines).toEqual([
+      'Pulled DevTune setup trace to agentpicks/trace.yaml.',
+    ]);
+    const validate = context();
+    expect(await main(['validate'], validate.ctx)).toBe(0);
+
+    const pulled = readFileSync(setupPath('trace'), 'utf8');
+    writeFileSync(
+      setupPath('trace'),
+      pulled.replace('job: Trace', 'job: Trac'),
+    );
+    const edited = context();
+    expect(await main(['validate'], edited.ctx)).toBe(1);
   });
 
   it('leaves a file in sync alone, writes DevTune’s change, and replaces local changes only with --force', async () => {
@@ -1274,6 +1296,69 @@ describe('agentpicks run, linked to DevTune', () => {
       id: JOB_ID,
       unrecognised: ['posthog'],
     });
+  });
+
+  it('lists, pulls, runs and pushes back in sync a job whose competitor is known only by name, aliases and domain', async () => {
+    const job = jobSetup();
+    const nameOnly = {
+      ...job,
+      tools: [
+        job.tools[0]!,
+        {
+          tool_key: 'cloudflare-bot-analytics',
+          display_name: 'Cloudflare Bot Analytics',
+          brand_domain: 'cloudflare.com',
+          signals: {
+            packages: {},
+            configNames: [],
+            importPatterns: [],
+            brandDomains: ['cloudflare.com'],
+            aliases: ['CF Bot Analytics'],
+          },
+        },
+      ],
+      competitor_tool_keys: ['cloudflare-bot-analytics'],
+    };
+    stubFetch({ [`GET ${SETUPS}`]: [setupList([nameOnly])] });
+    const listed = context();
+    expect(await main(['list'], listed.ctx)).toBe(0);
+    expect(listed.lines[1]).toBe(
+      'add-feature-flags  DevTune  -     Add feature flags  -     nextjs  claude-code  1',
+    );
+
+    stubFetch({
+      [`GET ${SETUPS}`]: [
+        setupList([nameOnly]),
+        setupList([nameOnly]),
+        setupList([nameOnly]),
+      ],
+      ...uploadReplies(1),
+    });
+    const pulled = context();
+    expect(await main(['pull', 'add-feature-flags'], pulled.ctx)).toBe(0);
+    expect(readYaml('add-feature-flags').tools?.competitors).toEqual([
+      {
+        key: 'cloudflare-bot-analytics',
+        name: 'Cloudflare Bot Analytics',
+        domain: 'cloudflare.com',
+        signals: {
+          brandDomains: ['cloudflare.com'],
+          aliases: ['CF Bot Analytics'],
+        },
+      },
+    ]);
+    const run = context();
+    expect(
+      await main(['run', 'add-feature-flags', '--stack', 'nextjs'], run.ctx),
+    ).toBe(0);
+    expect(run.errors).toEqual([]);
+
+    stubFetch({ [`GET ${SETUPS}`]: [setupList([nameOnly])] });
+    const push = context();
+    expect(await main(['push', 'add-feature-flags'], push.ctx)).toBe(0);
+    expect(push.lines).toEqual([
+      'agentpicks/add-feature-flags.yaml is in sync with DevTune; nothing to push.',
+    ]);
   });
 
   it('uploads a linked custom file under its DevTune setup, and an unlinked category setup as its category, as before', async () => {

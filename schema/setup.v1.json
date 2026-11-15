@@ -41,7 +41,7 @@
       "type": "string",
       "minLength": 1,
       "maxLength": 300,
-      "pattern": "^[^\\n\\r]+$"
+      "pattern": "^[^\\n\\r]*$"
     },
     "requests": {
       "description": "One request per intent. A run asks the add request, which a setup without from must give. With from, null leaves out the category's request of that intent.",
@@ -53,7 +53,7 @@
               "type": "string",
               "minLength": 8,
               "maxLength": 300,
-              "pattern": "^[^\\n\\r]+$"
+              "pattern": "^[^\\n\\r]*$"
             },
             {
               "type": "null"
@@ -66,7 +66,7 @@
               "type": "string",
               "minLength": 8,
               "maxLength": 300,
-              "pattern": "^[^\\n\\r]+$"
+              "pattern": "^[^\\n\\r]*$"
             },
             {
               "type": "null"
@@ -79,7 +79,7 @@
               "type": "string",
               "minLength": 8,
               "maxLength": 300,
-              "pattern": "^[^\\n\\r]+$"
+              "pattern": "^[^\\n\\r]*$"
             },
             {
               "type": "null"
@@ -92,7 +92,7 @@
               "type": "string",
               "minLength": 8,
               "maxLength": 300,
-              "pattern": "^[^\\n\\r]+$"
+              "pattern": "^[^\\n\\r]*$"
             },
             {
               "type": "null"
@@ -249,7 +249,7 @@
                       "type": "boolean"
                     },
                     "yieldsTo": {
-                      "maxItems": 40,
+                      "maxItems": 35,
                       "type": "array",
                       "items": {
                         "type": "string",
@@ -258,7 +258,7 @@
                       }
                     },
                     "receivesFrom": {
-                      "maxItems": 40,
+                      "maxItems": 35,
                       "type": "array",
                       "items": {
                         "type": "string",
@@ -276,7 +276,7 @@
           ]
         },
         "competitors": {
-          "maxItems": 40,
+          "maxItems": 35,
           "type": "array",
           "items": {
             "anyOf": [
@@ -421,7 +421,7 @@
                         "type": "boolean"
                       },
                       "yieldsTo": {
-                        "maxItems": 40,
+                        "maxItems": 35,
                         "type": "array",
                         "items": {
                           "type": "string",
@@ -430,7 +430,7 @@
                         }
                       },
                       "receivesFrom": {
-                        "maxItems": 40,
+                        "maxItems": 35,
                         "type": "array",
                         "items": {
                           "type": "string",

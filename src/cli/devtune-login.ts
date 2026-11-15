@@ -6,6 +6,7 @@
  * DEVTUNE_API_KEY, DEVTUNE_PROJECT_ID and DEVTUNE_API_BASE_URL, the names
  * `@devtune/cli` reads, take precedence, so CI needs no login. Keys and tokens are never printed.
  */
+/// <reference path="./fs-native-extensions.d.ts" />
 import { randomBytes } from 'node:crypto';
 import { constants, readFileSync } from 'node:fs';
 import { lstat, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';

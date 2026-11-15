@@ -25,12 +25,12 @@ import {
 } from '../catalogue/environments';
 import { checkSetupText, SETUPS_DIR } from '../setup/files';
 import {
-  SETUP_MAX_OWN_SIGNAL_TOOLS,
+  requestTextProblem,
+  SETUP_MAX_COMPETITORS,
   SETUP_REQUEST_MIN_LENGTH,
   SETUP_TEXT_MAX_LENGTH,
-  type SetupFile,
-  type SetupToolEntry,
-} from '../setup/schema';
+} from '../setup/rules';
+import type { SetupFile, SetupToolEntry } from '../setup/schema';
 import { UsageError } from './errors';
 import { detectRepository, type DetectedRepository } from './init-detect';
 import { devtuneDrafting, type Drafting, type JobDraft } from './init-draft';
@@ -195,6 +195,12 @@ const entries = (answer: string) =>
     .map((entry) => entry.trim())
     .filter(Boolean);
 
+/** Whether a request or new job line is shorter or longer than the setup rules take. */
+const badLength = (text: string) => {
+  const problem = requestTextProblem(text);
+  return problem === 'too_short' || problem === 'too_long';
+};
+
 /** The job: a built-in category by number or slug, or a job line of its own. */
 async function askJob(
   wizard: Wizard,
@@ -224,9 +230,13 @@ async function askJob(
       }
       const category = findCategoryRequests(answer);
       if (category) return { value: { category: category.slug } };
-      if (!/\s/.test(answer) || answer.length > SETUP_TEXT_MAX_LENGTH)
+      if (
+        !/\s/.test(answer) ||
+        // A new job line meets a request's length; the guard is resolveSetup's, which names the field.
+        badLength(answer)
+      )
         return {
-          problem: `Choose a category from 1 to ${count}, or write the job as a line of up to ${SETUP_TEXT_MAX_LENGTH} characters, such as Add feature flags.`,
+          problem: `Choose a category from 1 to ${count}, or write the job as a line of ${SETUP_REQUEST_MIN_LENGTH} to ${SETUP_TEXT_MAX_LENGTH} characters, such as Add feature flags.`,
         };
       return { value: { line: answer } };
     },
@@ -259,6 +269,10 @@ async function askCategoryTools(
       if (answer === 'all') return { value: null };
       const chosen = [...new Set(entries(answer))];
       const unknown = chosen.find((key) => !keys.includes(key) || key === own);
+      if (!unknown && chosen.length > SETUP_MAX_COMPETITORS)
+        return {
+          problem: `List at most ${SETUP_MAX_COMPETITORS} competitors, or all.`,
+        };
       return unknown
         ? {
             problem:
@@ -329,8 +343,7 @@ async function askRequest(
     fallback: draft ?? (intent === 'add' ? null : 'none'),
     read: (answer) => {
       if (answer === 'none' && intent !== 'add') return { value: null };
-      return answer.length >= SETUP_REQUEST_MIN_LENGTH &&
-        answer.length <= SETUP_TEXT_MAX_LENGTH
+      return !badLength(answer)
         ? { value: answer }
         : {
             problem: `Write the ${intent} request in ${SETUP_REQUEST_MIN_LENGTH} to ${SETUP_TEXT_MAX_LENGTH} characters${intent === 'add' ? '' : ', or none'}.`,
@@ -381,8 +394,8 @@ async function askCompetitors(
   own: SetupToolEntry | null,
   toolDrafts: Map<string, SetupToolEntry | null>,
 ): Promise<SetupToolEntry[]> {
-  const room = SETUP_MAX_OWN_SIGNAL_TOOLS - (own ? 1 : 0);
-  const tooMany = `List at most ${room}: a setup holds ${SETUP_MAX_OWN_SIGNAL_TOOLS} tools with their own signals.`;
+  const room = SETUP_MAX_COMPETITORS;
+  const tooMany = `List at most ${room}: a setup tracks up to ${room} competitors.`;
   if (drafted) {
     const names = await ask<string[]>(wizard, {
       label: "Competitors' names separated by commas, or none",

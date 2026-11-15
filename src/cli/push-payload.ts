@@ -17,6 +17,7 @@ import {
   fileTool,
   nameableStack,
 } from '../setup/link';
+import { SETUP_MAX_COMPETITORS } from '../setup/rules';
 import type { SetupFile, SetupToolEntry, SetupToolRef } from '../setup/schema';
 import type { DevtuneSetup, DevtuneSetupList } from './devtune-setups';
 import { UsageError } from './errors';
@@ -49,6 +50,16 @@ export function pushRequest(
     ...(file.tools?.competitors ?? []),
   ];
   const key = (ref: SetupToolRef) => (typeof ref === 'string' ? ref : ref.key);
+  // A customer's setup tracks at most six competitors; only one DevTune already holds with more, a public board, keeps
+  // them.
+  const competitors = file.tools?.competitors?.length ?? 0;
+  if (
+    competitors > SETUP_MAX_COMPETITORS &&
+    (current?.competitor_tool_keys.length ?? 0) <= SETUP_MAX_COMPETITORS
+  )
+    throw new UsageError(
+      `${shown}: a setup tracks at most ${SETUP_MAX_COMPETITORS} competitors, and tools.competitors lists ${competitors}. Remove ${competitors - SETUP_MAX_COMPETITORS}, then push again.`,
+    );
   const shared = {
     environment_ids: environmentIds(
       file,

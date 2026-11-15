@@ -5,145 +5,70 @@
  * `id`, the DevTune setup it is linked to, and `synced`, what pull or push last saw. The zod schema parses a file and is the source of the
  * JSON Schema published as `schema/setup.v1.json`.
  */
-import { RE2JS } from 're2js';
 import { z } from 'zod';
 
 import { CATEGORY_REQUESTS } from '../catalogue/categories';
 import { ENVIRONMENTS, isRetiredEnvironment } from '../catalogue/environments';
 import { SELF_RUN_AGENTS } from '../cli/self-run-agents';
+import { toolSignalFields } from './pattern-rules';
+import {
+  domainSchema,
+  ONE_LINE,
+  REQUEST_PROBLEM_MESSAGES,
+  SETUP_JOB_LINE_MIN_LENGTH,
+  SETUP_MAX_RECORDED_TOOLS,
+  SETUP_REQUEST_MIN_LENGTH,
+  SETUP_TEXT_MAX_LENGTH,
+  TEXT_PROBLEM_MESSAGES,
+  toolKeySchema,
+  toolNameSchema,
+  tooShortMessage,
+} from './rules';
 
 /** The agents a setup can name, by the name `--agent` takes first. */
 export const SETUP_AGENTS = SELF_RUN_AGENTS.map(
   (agent) => agent.aliases[0]!,
 ) as [string, ...string[]];
 
-/** The longest job line and request, as the app saves them. */
-export const SETUP_TEXT_MAX_LENGTH = 300;
-
-/** The shortest request the app saves. */
-export const SETUP_REQUEST_MIN_LENGTH = 8;
-
-/** The longest pattern the app saves. */
-export const SETUP_PATTERN_MAX_LENGTH = 200;
-
-/** The most tools with their own signals a setup holds, as a job in the app does. */
-export const SETUP_MAX_OWN_SIGNAL_TOOLS = 7;
-
-/**
- * A package name the sandbox's early-stop watcher can carry in a single-quoted shell string (no
- * quotes, spaces, `$` or backticks), with a letter or digit, so a prefix (`@acme/`, `acme*`) still
- * names something.
- */
-const PACKAGE_NAME = /^[A-Za-z0-9@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$/;
-
 /** A SHA-256 digest in hex, as DevTune's setup snapshot digest and a file's content digest are. */
 const sha256 = z.string().regex(/^[a-f0-9]{64}$/, {
   message: 'agentpicks writes this digest. Pull the setup again to restore it.',
 });
 
-/** A config name the watcher can carry, which `grep` never reads as an option: no leading `-`. */
-const CONFIG_NAME = /^[A-Za-z0-9@._/:*][A-Za-z0-9@._/:*-]*$/;
-
+/** One line of text, at least `min` characters; the request guard is `resolveSetup`'s, to name the field it refuses. */
 const text = (min: number) =>
   z
     .string({ error: 'Write it as one line of text.' })
     .trim()
-    .min(min, {
-      message: `Write at least ${min} character${min === 1 ? '' : 's'}.`,
-    })
-    .max(SETUP_TEXT_MAX_LENGTH)
-    .regex(/^[^\n\r]+$/, { message: 'Write it on one line.' });
+    .min(min, { message: tooShortMessage(min) })
+    .max(SETUP_TEXT_MAX_LENGTH, { message: TEXT_PROBLEM_MESSAGES.too_long })
+    .regex(ONE_LINE, { message: REQUEST_PROBLEM_MESSAGES.multiline });
 
-const line = text(1);
+const line = text(SETUP_JOB_LINE_MIN_LENGTH);
 const request = text(SETUP_REQUEST_MIN_LENGTH);
 
-const toolKey = z
-  .string()
-  .max(63)
-  .regex(/^[a-z0-9]+(?:[-_.][a-z0-9]+)*$/, {
-    message:
-      'A tool key is lowercase letters and digits, joined by -, _ or . (such as sentry or my-tool).',
-  });
-
-const domain = z
-  .string()
-  .trim()
-  .toLowerCase()
-  .min(3)
-  .max(253)
-  .regex(/^[a-z0-9-]+(?:\.[a-z0-9-]+)+$/, {
-    message: 'Give a bare domain, such as example.com.',
-  });
-
-const packageNames = z
-  .array(
-    z.string().trim().min(1).max(214).regex(PACKAGE_NAME, {
-      message:
-        'A package name holds a letter or digit, and no spaces, quotes, $ or backticks. End it with / or * to match a prefix.',
-    }),
-  )
-  .max(40);
-
-const pattern = z
-  .string()
-  .min(1)
-  .max(SETUP_PATTERN_MAX_LENGTH)
-  .refine(compiles, {
-    message:
-      "This pattern doesn't compile on RE2, which has no lookarounds or backreferences. Rewrite it.",
-  });
-
-function compiles(source: string): boolean {
-  try {
-    RE2JS.compile(source);
-    return true;
-  } catch {
-    return false;
-  }
-}
+const signalFields = toolSignalFields();
 
 /**
- * How a tool is recognised, in the shape of the catalogue's tool signals. A run's early stop reads
- * the package and config names; DevTune's classifier reads the rest.
+ * How a tool is recognised, in the shape of the catalogue's tool signals, every field optional. A
+ * tool may give only a name, aliases and brand domains.
  */
 export const toolSignalsSchema = z
   .object({
-    packages: z
-      .object({
-        npm: packageNames.optional(),
-        pypi: packageNames.optional(),
-        gem: packageNames.optional(),
-      })
-      .strict()
-      .optional(),
-    configNames: z
-      .array(
-        z.string().trim().min(2).max(100).regex(CONFIG_NAME, {
-          message:
-            "A config name holds no spaces, quotes, $ or backticks, and doesn't start with -.",
-        }),
-      )
-      .max(30)
-      .optional(),
-    importPatterns: z.array(pattern).max(20).optional(),
-    brandDomains: z.array(domain).max(10).optional(),
-    aliases: z.array(z.string().trim().min(1).max(100)).max(20).optional(),
-    commandPatterns: z.array(pattern).max(10).optional(),
-    configFiles: z.array(pattern).max(10).optional(),
-    configPatterns: z.array(pattern).max(10).optional(),
-    selfHosted: z.array(pattern).max(10).optional(),
-    frameworkBuiltIn: z.boolean().optional(),
-    yieldsTo: z.array(toolKey).max(40).optional(),
-    receivesFrom: z.array(toolKey).max(40).optional(),
+    ...signalFields,
+    packages: signalFields.packages.optional(),
+    configNames: signalFields.configNames.optional(),
+    importPatterns: signalFields.importPatterns.optional(),
+    brandDomains: signalFields.brandDomains.optional(),
   })
   .strict();
 
 /** A tool with its own signals, for a tool the catalogue doesn't hold or one recognised differently. */
 export const toolEntrySchema = z
   .object({
-    key: toolKey,
-    name: z.string().trim().min(1).max(100),
-    domain: domain.optional(),
+    key: toolKeySchema,
+    name: toolNameSchema,
+    domain: domainSchema.optional(),
     signals: toolSignalsSchema,
   })
   .strict();
@@ -151,7 +76,7 @@ export const toolEntrySchema = z
 export type SetupToolEntry = z.infer<typeof toolEntrySchema>;
 
 /** A tool of DevTune's catalogue by key, or a full entry. */
-const toolRef = z.union([toolKey, toolEntrySchema]);
+const toolRef = z.union([toolKeySchema, toolEntrySchema]);
 
 export type SetupToolRef = z.infer<typeof toolRef>;
 
@@ -211,7 +136,7 @@ export const setupFileSchema = z
     tools: z
       .object({
         own: toolRef.optional(),
-        competitors: z.array(toolRef).max(40).optional(),
+        competitors: z.array(toolRef).max(SETUP_MAX_RECORDED_TOOLS).optional(),
       })
       .strict()
       .optional()

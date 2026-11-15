@@ -7,6 +7,7 @@
  */
 import { z } from 'zod';
 
+import { SIGNAL_LIST_LIMITS } from '../setup/rules';
 import { toolSignalsSchema, type SetupToolEntry } from '../setup/schema';
 import { devtuneTarget, type DevtuneTarget } from './devtune-login';
 import { NotLoggedInError, UploadError } from './errors';
@@ -116,16 +117,15 @@ export function devtuneDrafting(
   };
 }
 
-/** The signal lists a setup file holds, with the most of each it takes. */
-const LISTS = {
-  configNames: 30,
-  importPatterns: 20,
-  brandDomains: 10,
-  configFiles: 10,
-  configPatterns: 10,
-} as const;
+/** The signal lists a drafted tool brings into a setup file; `SIGNAL_LIST_LIMITS` caps each. */
+const LISTS = [
+  'configNames',
+  'importPatterns',
+  'brandDomains',
+  'configFiles',
+  'configPatterns',
+] as const;
 const ECOSYSTEMS = ['npm', 'pypi', 'gem'] as const;
-const MAX_PACKAGES = 40;
 
 /**
  * A drafted tool's signals as a setup file holds them: each entry the setup schema accepts, the
@@ -146,19 +146,16 @@ function setupSignals(
   for (const ecosystem of ECOSYSTEMS) {
     const names = list(draftedPackages[ecosystem])
       .filter((name) => accepted({ packages: { [ecosystem]: [name] } }))
-      .slice(0, MAX_PACKAGES);
+      .slice(0, SIGNAL_LIST_LIMITS.packages);
     if (names.length > 0) packages[ecosystem] = names;
   }
   const signals: SetupToolEntry['signals'] = {
     ...(Object.keys(packages).length > 0 ? { packages } : {}),
   };
-  for (const [field, max] of Object.entries(LISTS) as [
-    keyof typeof LISTS,
-    number,
-  ][]) {
+  for (const field of LISTS) {
     const values = list(drafted[field])
       .filter((value) => accepted({ [field]: [value] }))
-      .slice(0, max);
+      .slice(0, SIGNAL_LIST_LIMITS[field]);
     if (values.length > 0) signals[field] = values;
   }
   const parsed = toolSignalsSchema.safeParse(signals);
