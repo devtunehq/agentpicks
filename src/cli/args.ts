@@ -377,6 +377,9 @@ export function setupPlan(
         from: setup.from,
         id: setup.id,
         job: setup.job,
+        ...(setup.unrecognised.length
+          ? { unrecognised: setup.unrecognised }
+          : {}),
       },
       path: file.path,
       customReason: setup.customReason,

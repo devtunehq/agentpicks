@@ -38,6 +38,7 @@ import {
   type RunPlan,
 } from './args';
 import { CUSTOM_SETUP_CATEGORY_PREFIX } from './bundle';
+import { categoryCopyPlan } from './category-copy';
 import { resolveCredentials } from './credentials';
 import {
   devtuneTarget,
@@ -48,6 +49,7 @@ import {
 import { chooseAgent } from './discover';
 import {
   BundleError,
+  NotLoggedInError,
   RepositoryRemoteError,
   UploadError,
   UsageError,
@@ -70,7 +72,13 @@ import { pushCommand } from './push-command';
 import { describeRepository, readRepository } from './repository';
 import { resultsCommand } from './results';
 import { selfRun } from './self-run';
-import { devtuneRunSetup, linkedBundle, linkUploads } from './setup-links';
+import {
+  devtuneRunSetup,
+  heldTools,
+  linkedBundle,
+  linkUploads,
+  readSetups,
+} from './setup-links';
 import { isFormatControl } from './terminal-text';
 import {
   findBundles,
@@ -112,12 +120,15 @@ run       Tests the coding agent installed here in a fresh Docker container per 
           your repository's committed files at HEAD, or at --ref; uncommitted changes aren't
           included. Uploading a --repo run needs the repository to have a remote.
           <setup> is a setup file's name in the repository's agentpicks folder, or its path,
-          or signed in, the name of a DevTune setup with no file. The setup says what to
+          or signed in, the name of a DevTune setup with no file that asks its category's
+          add request as published (pull a job or an edited copy and run the file). The setup says what to
           test; flags override it. On a terminal, run with no setup and no --category
           offers the setups to choose from. A setup linked to DevTune (it has an id)
           uploads under its DevTune setup. An unlinked setup from: a category, with no
           requests or tool signals of its own, uploads as that category; any other is
-          custom and uploads once agentpicks push links it.
+          custom and uploads once agentpicks push links it. Uploading, --category runs
+          the project's copy of the category as run <copy> would, creating the copy
+          first when the project has none; with --no-upload it runs the category itself.
 list      Lists the setup files in agentpicks/*.yaml at the repository root, flagging any
           that fails its checks. Signed in, it lists the project's DevTune setups too:
           where each lives (local, DevTune or both) and whether a linked pair is in sync.
@@ -267,8 +278,11 @@ function docker(ctx: CliContext) {
 
 async function runCommand(argv: string[], ctx: CliContext): Promise<number> {
   const command = parseRunCommand(argv, { picker: Boolean(ctx.interactive) });
+  // Uploading, a category runs as the project's copy of it, linked once the sign-in is checked.
   if (command.kind === 'category')
-    return runPlan(categoryPlan(command.args, ctx.cwd), ctx);
+    return runPlan(categoryPlan(command.args, ctx.cwd), ctx, () =>
+      categoryCopyPlan(command.args, ctx),
+    );
   const file = await runnableSetup(command.setup, ctx);
   if (file === null) return 1;
   const shown = relative(ctx.cwd, file.path) || file.path;
@@ -306,7 +320,16 @@ async function runnableSetup(
     throw error;
   }
   if (path === null) return null;
-  const file = readSetupFile(path);
+  let file = readSetupFile(path);
+  // A linked file may name a catalogue tool this version doesn't know, which its DevTune setup holds.
+  if (!file.setup && file.content?.id) {
+    const devtune = await readSetups(ctx).catch((error: unknown) => {
+      if (error instanceof NotLoggedInError || error instanceof UploadError)
+        return null;
+      throw error;
+    });
+    if (devtune) file = readSetupFile(path, heldTools(devtune));
+  }
   if (!file.setup) {
     for (const problem of file.problems)
       ctx.err(formatProblem(path, problem, ctx.cwd));
@@ -356,18 +379,30 @@ async function askLine(question: string): Promise<string> {
   }
 }
 
-/** Runs each test with each agent, `runs` times, uploading each bundle unless the plan says not to. */
-async function runPlan(plan: RunPlan, ctx: CliContext): Promise<number> {
+/**
+ * Runs each test with each agent, `runs` times, uploading each bundle unless the plan says not to.
+ * `link`, given, replaces an uploading plan once the sign-in is checked, before anything starts;
+ * it keeps the plan's repository and ref.
+ */
+async function runPlan(
+  given: RunPlan,
+  ctx: CliContext,
+  link?: (plan: RunPlan) => Promise<RunPlan>,
+): Promise<number> {
   // Read once, so every run tests the same commit whatever happens to the checkout meanwhile.
   const repository =
-    plan.repo === undefined ? undefined : readRepository(plan.repo, plan.ref);
-  const target = plan.upload ? devtuneTarget(ctx.io) : null;
+    given.repo === undefined
+      ? undefined
+      : readRepository(given.repo, given.ref);
+  const target = given.upload ? devtuneTarget(ctx.io) : null;
   // DevTune keys a repository's series by its remote, and refuses an upload without one.
   if (target && repository && repository.remoteUrl === null)
     throw new RepositoryRemoteError(
       `DevTune groups a repository's runs by its remote, and ${repository.root} has none agentpicks can record. Add an origin remote with a network address, or pass --no-upload to keep the bundles on this machine only.`,
     );
-  if (target) await assertSignedIn(target, ctx);
+  // A link reads DevTune next, which refuses a sign-in no longer valid before anything starts; agent_picks.run is checked at upload.
+  if (target) await assertSignedIn(target, ctx, { quiet: link !== undefined });
+  const plan = target && link ? await link(given) : given;
   const agentPlans = plan.agents.map((choice) =>
     planAgent(chooseAgent(ctx.io, choice)),
   );

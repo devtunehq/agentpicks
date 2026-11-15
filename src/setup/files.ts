@@ -11,7 +11,12 @@ import { parseDocument } from 'yaml';
 import type { z } from 'zod';
 
 import { UsageError } from '../cli/errors';
-import { resolveSetup, type ResolvedSetup, type SetupProblem } from './resolve';
+import {
+  resolveSetup,
+  type HeldTool,
+  type ResolvedSetup,
+  type SetupProblem,
+} from './resolve';
 import { setupFileSchema, type SetupFile } from './schema';
 
 /** The folder setup files live in, at the repository root. */
@@ -46,12 +51,16 @@ export function listSetupFiles(root: string): string[] {
     .sort();
 }
 
+/** The tools a linked file's DevTune setup holds, by the file's id, where DevTune was read. */
+export type HeldTools = (id: string) => readonly HeldTool[] | undefined;
+
 /**
- * Every setup file under `<root>/agentpicks`, read. Two files with one name (`x.yaml` and `x.yml`)
+ * Every setup file under `<root>/agentpicks`, read, a linked one against what `held` says its
+ * DevTune setup holds. Two files with one name (`x.yaml` and `x.yml`)
  * each get a problem, since `run x` can't tell them apart.
  */
-export function readSetupFiles(root: string): SetupOnDisk[] {
-  const files = listSetupFiles(root).map(readSetupFile);
+export function readSetupFiles(root: string, held?: HeldTools): SetupOnDisk[] {
+  const files = listSetupFiles(root).map((path) => readSetupFile(path, held));
   return files.map((file) => {
     const twin = files.find(
       (other) => other !== file && other.name === file.name,
@@ -85,14 +94,14 @@ export interface SetupOnDisk {
 }
 
 /** One setup file, read, checked and resolved; problems are collected, never thrown. */
-export function readSetupFile(path: string): SetupOnDisk {
+export function readSetupFile(path: string, held?: HeldTools): SetupOnDisk {
   let text: string;
   try {
     text = readFileSync(path, 'utf8');
   } catch (error) {
     return checkSetupText(path, null, error);
   }
-  return checkSetupText(path, text);
+  return checkSetupText(path, text, undefined, held);
 }
 
 /**
@@ -104,6 +113,7 @@ export function checkSetupText(
   path: string,
   text: string | null,
   readError?: unknown,
+  held?: HeldTools,
 ): SetupOnDisk {
   const name = basename(path, extname(path));
   const dir = dirname(path);
@@ -141,7 +151,11 @@ export function checkSetupText(
     ]);
   const parsed = setupFileSchema.safeParse(value);
   if (!parsed.success) return fail(parsed.error.issues.map(issueProblem));
-  const resolved = resolveSetup(name, parsed.data);
+  const resolved = resolveSetup(
+    name,
+    parsed.data,
+    parsed.data.id ? held?.(parsed.data.id) : undefined,
+  );
   if (!('setup' in resolved))
     return { ...fail(resolved.problems), content: parsed.data };
   return {

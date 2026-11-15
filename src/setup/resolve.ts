@@ -1,10 +1,12 @@
 /**
  * ABOUTME: Turns a parsed setup file into what a run tests, checked against the catalogue: `from`
- * inherits a built-in category's job, requests and early stop; tool keys must be that category's;
- * full tool entries add their package and config names to the early stop, as a job's tools do in a
- * managed run; stacks must run in the category, or in any job without one. A setup that is its
- * category as published (no requests or tools of its own) uploads as that category; any other is
- * custom. The app's rules hold too: no `yieldsTo` loop, and no request naming a tool it measures.
+ * inherits a built-in category's job, requests and early stop; a tool key must be a tool of DevTune's
+ * catalogue (one this version knows, or one the linked DevTune setup holds without signals), whose
+ * signals DevTune holds, so a run here recognises it only through its `from` category's early stop,
+ * and a copy names one its category doesn't measure only once the copy holds it; full tool entries add their package and config names to the early stop, as
+ * a job's tools do in a managed run; stacks must run in the category, or in any job without one. A
+ * setup that is its category as published (no requests or tools of its own) uploads as that
+ * category; any other is custom. The app's rules hold too: no `yieldsTo` loop, and no request naming a tool it measures.
  * Every problem names the field and the fix.
  */
 import {
@@ -55,6 +57,12 @@ export interface ResolvedSetup {
   earlyStop: EarlyStopPatterns;
   /** Why the setup is custom, for the upload refusal; null when it isn't. */
   customReason: string | null;
+  /**
+   * The catalogue tools it measures that its early stop doesn't hold (every key in a setup without
+   * `from`, and any the linked DevTune setup measures beside your tool and competitors), whose picks
+   * only DevTune, which holds their signals, can read.
+   */
+  unrecognised: string[];
   stacks: EnvironmentDefinition[] | null;
   /** The repository path, relative to the file's repository root, and the commit to test. */
   repo: { path: string; ref?: string } | null;
@@ -62,12 +70,32 @@ export interface ResolvedSetup {
   runs: number | null;
 }
 
+/**
+ * A tool the file's linked DevTune setup holds, as DevTune sends it: a catalogue tool with null
+ * signals, since DevTune keeps those.
+ */
+export interface HeldTool {
+  tool_key: string;
+  display_name: string;
+  signals: Record<string, unknown> | null;
+}
+
+/** Every tool key in DevTune's catalogue that this version knows. */
+const CATALOGUE_KEYS = new Set(Object.values(CATEGORY_TOOLS).flat());
+
 /** A watcher pattern that never matches: its input is normalised to have no underscores. */
 export const NEVER_PATTERN = '__no-pick__';
 
+/**
+ * `held` is what the file's linked DevTune setup holds, when DevTune was read: a key DevTune sent
+ * without signals is a catalogue tool even if this version doesn't know it, and a copy may name a
+ * catalogue tool its category doesn't measure only if the copy holds it. Unread (undefined), a
+ * linked copy's catalogue keys are left for push to check against DevTune.
+ */
 export function resolveSetup(
   name: string,
   file: SetupFile,
+  held?: readonly HeldTool[],
 ): { setup: ResolvedSetup; problems: [] } | { problems: SetupProblem[] } {
   const problems: SetupProblem[] = [];
   const category = file.from ? findCategoryRequests(file.from) : undefined;
@@ -102,7 +130,7 @@ export function resolveSetup(
     problems.push({
       field: 'tools',
       message:
-        'Give your tool under tools.own, or competitors under tools.competitors, each with its signals, so a run can recognise a pick.',
+        "Give your tool under tools.own, or competitors under tools.competitors, each with its signals or, for a tool in DevTune's catalogue, by its key, so a run can recognise a pick.",
     });
   const catalogueKeys = file.from ? (CATEGORY_TOOLS[file.from] ?? []) : [];
   for (const { ref, field } of tools) {
@@ -119,15 +147,21 @@ export function resolveSetup(
         });
       continue;
     }
-    if (!file.from)
+    const row = held?.find((each) => each.tool_key === ref);
+    if (file.from) {
+      // A copy measures another catalogue tool only once it is added in the DevTune app.
+      const unchecked = !held && file.id && CATALOGUE_KEYS.has(ref);
+      if (!catalogueKeys.includes(ref) && !row && !unchecked)
+        problems.push({
+          field,
+          message: `${file.from} has no tool ${ref}. Use one of ${catalogueKeys.join(', ')}, or add ${ref} to a category copy in the DevTune app, then run agentpicks pull.`,
+        });
+    } else if (!CATALOGUE_KEYS.has(ref) && row?.signals !== null)
       problems.push({
         field,
-        message: `${ref} is a tool key, which names a tool of the from category. Without from, give the full entry: key, name and signals, and optionally domain.`,
-      });
-    else if (!catalogueKeys.includes(ref))
-      problems.push({
-        field,
-        message: `${file.from} has no tool ${ref}. Use one of ${catalogueKeys.join(', ')}, or give the full entry: key, name and signals, and optionally domain.`,
+        message: row
+          ? `${ref} is a tool of your own, which a file gives in full. Run agentpicks pull to write its entry, or give the full entry: key, name and signals, and optionally domain.`
+          : `${ref} isn't a tool in this version of agentpicks' catalogue. Give the full entry: key, name and signals, and optionally domain; or, for a tool DevTune's catalogue has added since, update agentpicks.`,
       });
   }
   const entries = tools.flatMap(({ ref }) =>
@@ -164,7 +198,24 @@ export function resolveSetup(
   }
   for (const intent of PROMPT_INTENTS) {
     const text = file.requests?.[intent];
-    const named = text && entries.find((tool) => namesTool(text, tool));
+    const named =
+      text &&
+      [
+        ...entries.map((tool) => ({
+          name: tool.name,
+          words: entryWords(tool),
+        })),
+        // A tool by key: its key, and the name DevTune gives it, where DevTune sent one.
+        ...tools.flatMap(({ ref }) => {
+          if (typeof ref !== 'string') return [];
+          const shown = held?.find(
+            (each) => each.tool_key === ref,
+          )?.display_name;
+          return [
+            { name: shown ?? ref, words: [ref, ...(shown ? [shown] : [])] },
+          ];
+        }),
+      ].find((tool) => namesWord(text, tool.words));
     if (named)
       problems.push({
         field: `requests.${intent}`,
@@ -200,8 +251,24 @@ export function resolveSetup(
     return environment;
   });
 
+  const unrecognised = [
+    ...keys.filter(
+      (key, i) =>
+        typeof tools[i]!.ref === 'string' && !catalogueKeys.includes(key),
+    ),
+    // A catalogue tool the linked setup measures that is neither yours nor a competitor, which a
+    // file can't name: a run here can't recognise it either.
+    ...(held ?? [])
+      .filter(
+        (row) =>
+          row.signals === null &&
+          !keys.includes(row.tool_key) &&
+          !catalogueKeys.includes(row.tool_key),
+      )
+      .map((row) => row.tool_key),
+  ];
   const customReason = file.from
-    ? editedReason(category!, file, entries)
+    ? editedReason(category!, file, entries, unrecognised)
     : 'it has its own job';
   if (customReason && findCategoryRequests(name))
     problems.push({
@@ -212,9 +279,11 @@ export function resolveSetup(
     ...catalogueKeys,
     ...keys,
   ]);
+  // A tool by key has no signals here, so a setup with one can't need its entries to stop early.
   if (
     !file.from &&
     entries.length > 0 &&
+    unrecognised.length === 0 &&
     earlyStop.installPattern === NEVER_PATTERN &&
     earlyStop.codePattern === NEVER_PATTERN
   )
@@ -238,6 +307,7 @@ export function resolveSetup(
       request: { intent: 'add', text: add! },
       earlyStop,
       customReason,
+      unrecognised,
       stacks: file.stacks
         ? stacks.filter((env): env is EnvironmentDefinition => env !== null)
         : null,
@@ -282,13 +352,15 @@ function hasSignal(entry: SetupToolEntry): boolean {
 
 /**
  * Why a setup `from` a category isn't that category as published, or null when it is: a request
- * worded differently or left out, or a tool with its own signals. Naming which catalogue tools are yours and
- * which compete changes nothing a run asks or recognises, so it isn't an edit.
+ * worded differently or left out, a tool with its own signals, or a catalogue tool the category
+ * doesn't measure (`added`). Naming which of the category's tools are yours and which compete
+ * changes nothing a run asks or recognises, so it isn't an edit.
  */
 function editedReason(
   category: CategoryRequests,
   file: SetupFile,
   entries: SetupToolEntry[],
+  added: string[],
 ): string | null {
   for (const intent of PROMPT_INTENTS) {
     const text = file.requests?.[intent];
@@ -301,6 +373,8 @@ function editedReason(
   }
   if (entries.length > 0)
     return `it gives ${entries.map((e) => e.key).join(', ')} signals of its own`;
+  if (added.length > 0)
+    return `it measures ${added.join(', ')}, which ${category.slug} doesn't`;
   return null;
 }
 
@@ -407,17 +481,19 @@ function requestRefusal(text: string): string | undefined {
   return REQUEST_REFUSALS.find(([pattern]) => pattern.test(text))?.[1];
 }
 
-/**
- * Whether `text` names the tool, as the app's `names_tool` rail reads it: its name, an alias or a
- * domain, standing as a word (no letter or digit touching either end), without case.
- */
-function namesTool(text: string, tool: SetupToolEntry): boolean {
+/** The words that name a full entry, as the app's `names_tool` rail reads them: its name, aliases and domains. */
+function entryWords(tool: SetupToolEntry): string[] {
   return [
     tool.name,
     ...(tool.signals.aliases ?? []),
     ...(tool.signals.brandDomains ?? []),
     ...(tool.domain ? [tool.domain] : []),
-  ].some(
+  ];
+}
+
+/** Whether `text` holds one of `words` standing as a word (no letter or digit touching either end), without case. */
+function namesWord(text: string, words: readonly string[]): boolean {
+  return words.some(
     (word) =>
       word.trim() !== '' &&
       new RegExp(

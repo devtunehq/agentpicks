@@ -18,7 +18,7 @@ import { devtuneSetupFile, SYNC_STATE_LABELS, syncState } from '../setup/link';
 import { resolveSetup, type ResolvedSetup } from '../setup/resolve';
 import { NotLoggedInError, UploadError, UsageError } from './errors';
 import type { CliContext } from './main';
-import { readSetups, type DevtuneSetups } from './setup-links';
+import { heldTools, readSetups, type DevtuneSetups } from './setup-links';
 
 export async function listCommand(
   argv: string[],
@@ -42,7 +42,8 @@ export async function listCommand(
       ctx.err(`DevTune setups aren't listed: ${error.message}`);
     else throw error;
   }
-  if (devtune) return linkedTable(files, devtune, ctx);
+  if (devtune)
+    return linkedTable(readSetupFiles(root, heldTools(devtune)), devtune, ctx);
   if (files.length === 0) {
     ctx.out(`${join(root, SETUPS_DIR)} holds no setup files. ${WRITE_ONE}`);
     return 0;
@@ -92,7 +93,7 @@ function linkedTable(
         const mapped = devtuneSetupFile(setup);
         if ('problem' in mapped)
           return { name, cells: null, problem: mapped.problem };
-        const resolved = resolveSetup(name, mapped.file);
+        const resolved = resolveSetup(name, mapped.file, setup.tools);
         if (!('setup' in resolved)) {
           const [first] = resolved.problems;
           return {

@@ -25,15 +25,22 @@ import { discoverProject } from './upload';
  * or a paused project), is refused. A renewal whose answer was lost is refused too. When DevTune
  * can't be reached or answers with a status a retry may pass (`isTransientStatus`), it warns and
  * carries on, so bundles are still written and kept, and the upload checks again. A sign-in
- * revoked later, during a long run, is refused at upload. A key needs nothing.
+ * revoked later, during a long run, is refused at upload. A key needs nothing. With `quiet`, a
+ * caller whose next DevTune read refuses a sign-in no longer valid carries on without the warning;
+ * agent_picks.run is then checked at upload.
  */
-export async function assertSignedIn(target: DevtuneTarget, ctx: CliContext) {
+export async function assertSignedIn(
+  target: DevtuneTarget,
+  ctx: CliContext,
+  { quiet = false }: { quiet?: boolean } = {},
+) {
   if (!('session' in target)) return;
   let connection;
   try {
     connection = await discoverProject(target);
   } catch (error) {
     if (!(error instanceof UploadError && error.transient)) throw error;
+    if (quiet) return;
     ctx.err(
       `Couldn't check the DevTune sign-in before starting; uploading checks it again. ${error.message}`,
     );

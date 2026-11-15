@@ -33,7 +33,7 @@ inputs:
     required: false
     default: 'false'
   devtune-api-key:
-    description: A DevTune project API key with the Agent Picks Run scope, and Visibility for a linked setup file or a DevTune setup's name. Pass it from a secret. Needed unless no-upload is true.
+    description: A DevTune project API key with the Agent Picks Run scope; Visibility too for a linked setup file, a DevTune setup's name or a category, and Actions Write for a category the project has no copy of yet. Pass it from a secret. Needed unless no-upload is true.
     required: false
   devtune-project-id:
     description: The DevTune project id runs are uploaded to. Needed unless no-upload is true.

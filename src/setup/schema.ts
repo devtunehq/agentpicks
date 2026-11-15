@@ -150,7 +150,7 @@ export const toolEntrySchema = z
 
 export type SetupToolEntry = z.infer<typeof toolEntrySchema>;
 
-/** A catalogue tool of the `from` category by key, or a full entry. */
+/** A tool of DevTune's catalogue by key, or a full entry. */
 const toolRef = z.union([toolKey, toolEntrySchema]);
 
 export type SetupToolRef = z.infer<typeof toolRef>;
@@ -216,7 +216,7 @@ export const setupFileSchema = z
       .strict()
       .optional()
       .describe(
-        'Your tool and its competitors: a tool key of the from category, or a full entry with key, name and signals, and optionally domain.',
+        "Your tool and its competitors: the key of a tool in DevTune's catalogue (such as sentry), or a full entry with key, name and signals, and optionally domain.",
       ),
     stacks: z
       .array(

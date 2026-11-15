@@ -3,8 +3,8 @@
  * linked pair from that digest and DevTune's snapshot digest against what pull or push last saw
  * (`synced`), the name a DevTune setup goes by, and a DevTune setup written as a file. A file says
  * what it can (job, requests, tools, stacks, agents); what it can't (models, building blocks, a
- * tool neither yours nor a competitor) stays in DevTune, and push keeps it. A copy's catalogue tools
- * come by key, since DevTune doesn't send their signals; a job measuring one can't be a file.
+ * tool neither yours nor a competitor) stays in DevTune, and push keeps it. A tool from DevTune's
+ * catalogue comes by key, in a job or a copy, since DevTune doesn't send its signals.
  */
 import { createHash } from 'node:crypto';
 
@@ -130,7 +130,7 @@ export function devtuneSetupNames(setups: DevtuneSetup[]): Map<string, string> {
       'file' in file &&
       file.file.from !== undefined &&
       !file.file.requests &&
-      !hasEntries(file.file);
+      !hasOwnTools(file.file);
     let base =
       unedited && setup.source_category_slug
         ? setup.source_category_slug
@@ -144,9 +144,14 @@ export function devtuneSetupNames(setups: DevtuneSetup[]): Map<string, string> {
   return names;
 }
 
-function hasEntries(file: SetupFile) {
+/** Whether a `from` file measures a tool its category doesn't: a full entry, or another catalogue tool by key. */
+export function hasOwnTools(file: SetupFile) {
+  if (!file.from) return false;
+  const categoryKeys = CATEGORY_TOOLS[file.from] ?? [];
   return [file.tools?.own, ...(file.tools?.competitors ?? [])].some(
-    (ref) => ref !== undefined && typeof ref !== 'string',
+    (ref) =>
+      ref !== undefined &&
+      (typeof ref !== 'string' || !categoryKeys.includes(ref)),
   );
 }
 
@@ -180,16 +185,12 @@ export function fileTool(
   };
 }
 
-/** Why a job holding a catalogue tool, whose signals DevTune doesn't send, can't be a file or be pushed. */
-export function catalogueToolProblem(key: string) {
-  return `It measures ${key}, a tool from DevTune's catalogue, whose signals DevTune doesn't send, so a setup file can't hold it. Change the setup in the DevTune app.`;
-}
-
 /**
- * A DevTune setup as a setup file, or why it can't be one: a job is its line, requests and tools
- * with their signals; a copy or category setup is `from` its category, with the requests that
- * differ from the category's (null for one it leaves out) and tools by key, except a tool of the
- * customer's own, as a full entry. `keep` carries the local file's own repo and runs.
+ * A DevTune setup as a setup file, or why it can't be one: a job is its line, requests and tools;
+ * a copy or category setup is `from` its category, with the requests that differ from the
+ * category's (null for one it leaves out). In both, a tool the customer authored is a full entry
+ * with its signals and a tool from DevTune's catalogue, whose signals DevTune doesn't send, is its
+ * key. `keep` carries the local file's own repo and runs.
  */
 export function devtuneSetupFile(
   setup: DevtuneSetup,
@@ -203,12 +204,8 @@ export function devtuneSetupFile(
     return {
       problem: `It is a setup of the category ${setup.source_category_slug}, which this version of agentpicks doesn't have. Update agentpicks, then try again.`,
     };
-  const withheld = from
-    ? undefined
-    : setup.tools.find((row) => row.signals === null);
-  if (withheld) return { problem: catalogueToolProblem(withheld.tool_key) };
   const catalogueKeys = from ? (CATEGORY_TOOLS[from.slug] ?? []) : [];
-  // A tool key, or a full entry for the schema to check.
+  // A tool key, or a full entry for the schema to check. DevTune sends no signals for a catalogue tool.
   const tool = (key: string): unknown => {
     if (catalogueKeys.includes(key)) return key;
     const row = setup.tools.find((each) => each.tool_key === key);
@@ -264,9 +261,13 @@ export function devtuneSetupFile(
   return { file: parsed.data };
 }
 
-/** Whether a DevTune setup, written as a file, passes the file's checks. */
-export function devtuneSetupProblems(name: string, file: SetupFile) {
-  const resolved = resolveSetup(name, file);
+/** Whether a DevTune setup, written as a file, passes the file's checks against the tools it holds. */
+export function devtuneSetupProblems(
+  setup: DevtuneSetup,
+  name: string,
+  file: SetupFile,
+) {
+  const resolved = resolveSetup(name, file, setup.tools);
   return 'setup' in resolved ? [] : resolved.problems;
 }
 

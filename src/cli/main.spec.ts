@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import packageJson from '../../package.json';
 import { bundleManifestSchema } from '../bundle/schema';
+import { findCategoryRequests } from '../catalogue/categories';
 import { CATEGORY_EARLY_STOP } from '../catalogue/early-stop.generated';
 import { parsePackedEntries } from '../locks/locked-files';
 import { WRITTEN_SECRETS_LIMIT } from '../run/artifact-redaction';
@@ -36,6 +37,8 @@ import {
   completed,
   created,
   refused,
+  SETUPS,
+  setupList,
   stubFetch,
   TARGET,
   UPLOADS,
@@ -168,6 +171,34 @@ const ARTIFACTS = {
   'earlystop.json':
     '{"reason":"pick","triggerSec":40,"graceSec":60,"killed":true,"agentFound":true}',
 };
+
+/** The project's unedited copy of ci, which a signed-in --category ci run uploads under. */
+function ciCopy() {
+  return {
+    id: '1a000000-0000-4000-8000-0000000000c1',
+    category_slug: 'ci-copy',
+    name: 'CI',
+    kind: 'copy',
+    source_category_slug: 'ci',
+    snapshot_digest: 'b'.repeat(64),
+    requests: Object.fromEntries(
+      findCategoryRequests('ci')!.prompts.map((p) => [p.intent, p.text]),
+    ),
+    tools: [],
+    own_tool_key: null,
+    competitor_tool_keys: [],
+    environments: [
+      { id: 'e0000000-0000-4000-8000-000000000001', slug: 'nextjs' },
+    ],
+    agent_models: [{ agent: 'claude_code', model: 'claude-sonnet-5-5' }],
+    building_blocks: null,
+  };
+}
+
+/** The setup reads of a signed-in --category ci run: finding the project's copy, then linking its uploads. */
+const ciCopyReplies = () => ({
+  [`GET ${SETUPS}`]: [setupList([ciCopy()]), setupList([ciCopy()])],
+});
 
 let cwd: string;
 beforeEach(() => {
@@ -908,7 +939,8 @@ describe('agentpicks run, uploading', () => {
     });
 
   it('uploads the bundle once it is written and listed, with the saved login, and prints where it went', async () => {
-    const calls = stubFetch({
+    const fetched = stubFetch({
+      ...ciCopyReplies(),
       [`POST ${UPLOADS}`]: [
         created(RUN_ID, BUNDLE_NAMES, {
           'meta.json': 'https://storage.test/meta',
@@ -926,6 +958,7 @@ describe('agentpicks run, uploading', () => {
     ).toBe(0);
     expect(ctx.errors).toEqual([]);
 
+    const calls = fetched.filter((c) => c.url !== SETUPS);
     const [runId] = readdirSync(join(cwd, 'agentpicks-runs'));
     const bundle = join(cwd, 'agentpicks-runs', runId!);
     expect(JSON.parse(calls[0]!.body!).runId).toBe(runId);
@@ -981,6 +1014,7 @@ describe('agentpicks run, uploading', () => {
     const message =
       'Uploading self-runs needs an Agent Picks Local Runner, Cloud or Enterprise plan.';
     stubFetch({
+      ...ciCopyReplies(),
       [`POST ${UPLOADS}`]: [refused(403, 'plan_excludes_uploads', message)],
     });
     const fake = fakeProvider({ artifacts: ARTIFACTS });
@@ -1444,6 +1478,18 @@ describe('agentpicks login, in the browser', () => {
   });
 });
 
+/**
+ * An unlinked setup file from ci, which uploads as ci with no setup read: the sign-in check's own
+ * warning shows on its runs, where a --category run's setup read checks the sign-in instead.
+ */
+function ciSetupFile() {
+  mkdirSync(join(cwd, 'agentpicks'));
+  writeFileSync(
+    join(cwd, 'agentpicks', 'ci.yaml'),
+    'from: ci\nstacks: [nextjs]\n',
+  );
+}
+
 describe('agentpicks run and upload, with a saved sign-in', () => {
   afterEach(() => vi.unstubAllGlobals());
   const RUN_ID = '0f9d5a8e-5d1c-4b8e-9a43-3c1f0e6b7a21';
@@ -1471,6 +1517,7 @@ describe('agentpicks run and upload, with a saved sign-in', () => {
     };
   };
   const uploadReplies = () => ({
+    ...ciCopyReplies(),
     [`GET ${CONNECTION}`]: [signedInConnection()],
     [`POST ${UPLOADS}`]: [
       created(RUN_ID, Object.keys(ARTIFACTS), {
@@ -1604,11 +1651,10 @@ describe('agentpicks run and upload, with a saved sign-in', () => {
     async (_state, answer, warning) => {
       const replies = uploadReplies();
       stubFetch({ ...replies, [`GET ${CONNECTION}`]: [answer] });
+      ciSetupFile();
       const fake = fakeProvider({ artifacts: ARTIFACTS });
       const ctx = context(signedIn(Date.now() + 3_600_000), fake.provider, cwd);
-      expect(
-        await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
-      ).toBe(0);
+      expect(await main(['run', 'ci'], ctx)).toBe(0);
       expect(ctx.errors).toEqual([warning]);
       expect(fake.execs.length).toBeGreaterThan(0);
     },
@@ -1621,11 +1667,10 @@ describe('agentpicks run and upload, with a saved sign-in', () => {
         { status: 503, body: {} },
       ],
     });
+    ciSetupFile();
     const fake = fakeProvider({ artifacts: ARTIFACTS });
     const ctx = context(signedIn(0), fake.provider, cwd);
-    expect(
-      await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
-    ).toBe(1);
+    expect(await main(['run', 'ci'], ctx)).toBe(1);
     expect(ctx.errors[0]).toBe(
       "Couldn't check the DevTune sign-in before starting; uploading checks it again. A sign-in request to DevTune failed (503). Try again later.",
     );
@@ -1634,6 +1679,26 @@ describe('agentpicks run and upload, with a saved sign-in', () => {
       'A sign-in request to DevTune failed (503). Try again later.',
     );
     expect(ctx.errors[2]).toMatch(/^The bundle stays in /);
+  });
+
+  it("stops a --category run before Docker when renewing fails with a 5xx at the project's setup read", async () => {
+    stubFetch({
+      [`POST ${TOKEN}`]: [
+        { status: 503, body: {} },
+        { status: 503, body: {} },
+      ],
+    });
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    const ctx = context(signedIn(0), fake.provider, cwd);
+    expect(
+      await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
+    ).toBe(1);
+    // The setup read is the check, so the sign-in check's "checks it again" warning isn't printed.
+    expect(ctx.errors).toEqual([
+      'A sign-in request to DevTune failed (503). Try again later.',
+    ]);
+    expect(ctx.dockerCalls).toEqual([]);
+    expect(fake.execs).toEqual([]);
   });
 
   it('stops before Docker when the renewal’s answer is lost, saying to sign in again', async () => {
@@ -1697,6 +1762,7 @@ describe('agentpicks run and upload, with a saved sign-in', () => {
     'names agentpicks login, not devtune login, when DevTune refuses the token at upload (%i)',
     async (status, said, shown) => {
       stubFetch({
+        ...ciCopyReplies(),
         [`GET ${CONNECTION}`]: [signedInConnection()],
         [`POST ${UPLOADS}`]: [
           { status, body: { error: 'refused', message: said } },
@@ -1714,6 +1780,7 @@ describe('agentpicks run and upload, with a saved sign-in', () => {
 
   it('says to log in again when DevTune refuses the token without a reason', async () => {
     stubFetch({
+      ...ciCopyReplies(),
       [`GET ${CONNECTION}`]: [signedInConnection()],
       [`POST ${UPLOADS}`]: [
         {

@@ -3,15 +3,16 @@
  * agent-picks/setup, its tools by key, and a job through PUT agent-picks/job. Each carries the digest
  * of the setup the file last saw (null for a new setup), so DevTune refuses a setup changed since
  * as setup_changed. What a file can't say (models, building blocks, a tool neither yours nor a
- * competitor, a stack or agent this version can't name) is sent as DevTune holds it. A copy's tool of
- * the customer's own is added in the DevTune app, so a `from` file's full entry must be one DevTune
- * already holds as it says.
+ * competitor, a stack or agent this version can't name) is sent as DevTune holds it. A tool from
+ * DevTune's catalogue goes by key alone, and a job save fills in its signals. A copy's tool beyond
+ * its category's is added in the DevTune app, so a `from` file's full entry must be one DevTune
+ * already holds as it says, and a key one its category measures or the copy holds.
  */
 import { findCategoryRequests } from '../catalogue/categories';
+import { CATEGORY_TOOLS } from '../catalogue/category-tools.generated';
 import { PROMPT_INTENTS } from '../catalogue/prompt-intents';
 import {
   canonical,
-  catalogueToolProblem,
   devtuneAgent,
   fileTool,
   nameableStack,
@@ -62,10 +63,16 @@ export function pushRequest(
     ...(current ? { setup: current.id } : {}),
   };
   if (from) {
+    // A copy's tool beyond its category's is added in the DevTune app, and the copy then holds it.
     for (const ref of tools)
-      if (typeof ref !== 'string' && !heldAsWritten(ref, current))
+      if (
+        typeof ref === 'string'
+          ? !CATEGORY_TOOLS[from.slug]?.includes(ref) &&
+            !current?.tools.some((row) => row.tool_key === ref)
+          : !heldAsWritten(ref, current)
+      )
         throw new UsageError(
-          `${shown}: ${ref.key} isn't a tool of ${from.slug}. Add your own tool to a category copy in the DevTune app, then run agentpicks pull.`,
+          `${shown}: ${key(ref)} isn't a tool of ${from.slug}. Add it to a category copy in the DevTune app, then run agentpicks pull.`,
         );
     return {
       route: 'setup',
@@ -78,11 +85,6 @@ export function pushRequest(
       },
     };
   }
-  const withheld = current?.tools.find((row) => row.signals === null);
-  if (withheld)
-    throw new UsageError(
-      `${shown}: ${catalogueToolProblem(withheld.tool_key)}`,
-    );
   if (file.requests?.improve != null)
     throw new UsageError(
       `${shown}: requests.improve can't be saved on a job. Remove it, and change it in DevTune instead.`,
@@ -109,16 +111,11 @@ export function pushRequest(
       },
       building_blocks: current?.building_blocks ?? NO_BUILDING_BLOCKS,
       tools: [
-        ...tools.map((ref) => jobTool(ref, current, shown)),
+        ...tools.map((ref) => jobTool(ref, current)),
         // A tool DevTune measures that is neither yours nor a competitor, which a file can't name.
         ...(current?.tools ?? [])
           .filter((row) => !listed.has(row.tool_key) && !held.has(row.tool_key))
-          .map((row) => ({
-            tool_key: row.tool_key,
-            display_name: row.display_name,
-            brand_domain: row.brand_domain,
-            signals: row.signals,
-          })),
+          .map(heldJobTool),
       ],
       own_tool_key: file.tools?.own === undefined ? null : key(file.tools.own),
       competitor_tool_keys: (file.tools?.competitors ?? []).map(key),
@@ -162,27 +159,31 @@ function heldAsWritten(entry: SetupToolEntry, current: DevtuneSetup | null) {
   );
 }
 
-/** A file's tool as the job save takes it: a full entry's own signals, or DevTune's for a key. */
-function jobTool(
-  ref: SetupToolRef,
-  current: DevtuneSetup | null,
-  shown: string,
-) {
+/**
+ * A tool DevTune's setup holds as the job save takes it: in full with the signals DevTune sent, or a
+ * catalogue tool, whose signals DevTune doesn't send, by key alone.
+ */
+function heldJobTool(row: DevtuneSetup['tools'][number]) {
+  return row.signals === null
+    ? { tool_key: row.tool_key }
+    : {
+        tool_key: row.tool_key,
+        display_name: row.display_name,
+        brand_domain: row.brand_domain,
+        signals: row.signals,
+      };
+}
+
+/**
+ * A file's tool as the job save takes it: a full entry's own signals, DevTune's for a key its setup
+ * holds, or a catalogue tool by key alone, which the save fills in.
+ */
+function jobTool(ref: SetupToolRef, current: DevtuneSetup | null) {
   const row = current?.tools.find(
     (each) => each.tool_key === (typeof ref === 'string' ? ref : ref.key),
   );
-  if (typeof ref === 'string') {
-    if (!row?.signals)
-      throw new UsageError(
-        `${shown}: DevTune's setup doesn't hold ${ref}, so push can't send how to recognise it. Give it as a full entry, with key, name and signals.`,
-      );
-    return {
-      tool_key: row.tool_key,
-      display_name: row.display_name,
-      brand_domain: row.brand_domain,
-      signals: row.signals,
-    };
-  }
+  if (typeof ref === 'string')
+    return row ? heldJobTool(row) : { tool_key: ref };
   return {
     tool_key: ref.key,
     display_name: ref.name,

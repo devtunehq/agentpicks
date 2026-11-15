@@ -3,8 +3,9 @@
  * read from its bundle with the early-stop watcher's own rule (`readWatchPick`) and the patterns
  * the run recorded, as a table with a
  * count per setup, or as JSON rows. A run with no pick reads `none`; one whose bundle or signals
- * can't be read reads `Unmeasured`. DevTune's full analysis (the stated pick, the decision trail,
- * rates) isn't here.
+ * can't be read reads `Unmeasured`, and so does one with no pick from a setup naming a catalogue
+ * tool by key, whose signals only DevTune holds. DevTune's full analysis (the stated pick, the
+ * decision trail, rates) isn't here.
  */
 import { existsSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
@@ -123,7 +124,7 @@ export function resultRow(dir: string): ResultRow {
   const { category } = manifest.request;
   const custom = category.startsWith(CUSTOM_SETUP_CATEGORY_PREFIX);
   // Only the patterns the run watched for: a later catalogue could read an old run differently.
-  const pick: WatchPick = earlyStop
+  const watched: WatchPick = earlyStop
     ? readWatchPick(
         Object.fromEntries(
           [...bundle.contents].map(([name, bytes]) => [
@@ -138,6 +139,14 @@ export function resultRow(dir: string): ResultRow {
         reason:
           'the bundle was written before agentpicks recorded the early-stop patterns a run watches for. Run it again to read its pick.',
       };
+  // No pick by the patterns could still be a pick of a tool they don't hold.
+  const pick: WatchPick =
+    watched.status === 'none' && setup?.unrecognised?.length
+      ? {
+          status: 'unmeasured',
+          reason: `${setup.name} measures ${setup.unrecognised.join(', ')} from DevTune's catalogue, and this machine has no signals for ${setup.unrecognised.length === 1 ? 'it' : 'them'}.`,
+        }
+      : watched;
   return {
     dir,
     runId: manifest.runId,

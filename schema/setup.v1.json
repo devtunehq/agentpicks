@@ -103,7 +103,7 @@
       "additionalProperties": false
     },
     "tools": {
-      "description": "Your tool and its competitors: a tool key of the from category, or a full entry with key, name and signals, and optionally domain.",
+      "description": "Your tool and its competitors: the key of a tool in DevTune's catalogue (such as sentry), or a full entry with key, name and signals, and optionally domain.",
       "type": "object",
       "properties": {
         "own": {

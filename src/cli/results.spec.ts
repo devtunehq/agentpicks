@@ -259,6 +259,41 @@ describe('agentpicks results', () => {
     );
   });
 
+  it('reads a run with no pick as Unmeasured when its setup names a catalogue tool by key, and a pick its patterns hold as picked', async () => {
+    const setup = {
+      name: 'flags',
+      from: null,
+      id: null,
+      job: 'Add feature flags',
+      unrecognised: ['posthog'],
+    };
+    const earlyStop = {
+      installPattern: '"@acme/flags"',
+      codePattern: '__no-pick__',
+    };
+    // PostHog landed, which only DevTune's signals can tell.
+    await bundle(RUN(1), signals(',\n    "posthog-js": "^1.0.0"', ''), {
+      category: 'setup:flags',
+      setup,
+      earlyStop,
+    });
+    await bundle(RUN(2), signals(',\n    "@acme/flags": "^1.0.0"', ''), {
+      category: 'setup:flags',
+      setup,
+      earlyStop,
+    });
+    const ctx = context();
+    expect(await main(['results', '--json'], ctx)).toBe(0);
+    expect(JSON.parse(ctx.lines.join('\n'))).toEqual([
+      expect.objectContaining({
+        status: 'unmeasured',
+        reason:
+          "flags measures posthog from DevTune's catalogue, and this machine has no signals for it.",
+      }),
+      expect.objectContaining({ status: 'picked', tool: '@acme/flags' }),
+    ]);
+  });
+
   it('keeps bundle text from driving the terminal', async () => {
     await bundle(RUN(1), signals('', ''), {
       model: 'opus\u001b]52;c;cGF5bG9hZA==\u0007\u001b[2J',

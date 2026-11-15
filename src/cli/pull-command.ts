@@ -21,6 +21,7 @@ import type { CliContext } from './main';
 import {
   findDevtuneSetup,
   orphanedMessage,
+  heldTools,
   readSetups,
   type DevtuneSetups,
 } from './setup-links';
@@ -37,8 +38,8 @@ export async function pullCommand(
     );
   const [arg] = positionals;
   const root = setupsRoot(ctx.cwd);
-  const files = readSetupFiles(root);
   const devtune = await readSetups(ctx);
+  const files = readSetupFiles(root, heldTools(devtune));
   let setups = devtune.list.setups;
   if (arg !== undefined) {
     // A local file's name pulls the setup it is linked to.
@@ -152,7 +153,11 @@ function pullOne(
     return false;
   }
   ctx.out(`Pulled DevTune setup ${name} to ${shown(path, ctx)}.`);
-  for (const problem of devtuneSetupProblems(local?.name ?? name, mapped.file))
+  for (const problem of devtuneSetupProblems(
+    setup,
+    local?.name ?? name,
+    mapped.file,
+  ))
     ctx.err(
       `${shown(path, ctx)}: ${problem.field}: ${problem.message} Fix it before running the setup.`,
     );

@@ -16,6 +16,7 @@ import {
   formatProblem,
   readSetupFile,
   readSetupFiles,
+  type HeldTools,
   setupsRoot,
   type SetupOnDisk,
 } from '../setup/files';
@@ -32,6 +33,7 @@ import type { CliContext } from './main';
 import { pushRequest, type PushRequest } from './push-payload';
 import {
   orphanedMessage,
+  heldTools,
   readSetups,
   writeLink,
   type DevtuneSetups,
@@ -48,15 +50,17 @@ export async function pushCommand(
     throw new UsageError(
       `Name one setup to push, or none for every one, not ${argv.join(', ')}.`,
     );
-  const files =
+  const read = (held?: HeldTools) =>
     argv.length === 1
-      ? [readSetupFile(findSetup(argv[0]!, ctx.cwd))]
-      : readSetupFiles(setupsRoot(ctx.cwd));
-  if (files.length === 0)
+      ? [readSetupFile(findSetup(argv[0]!, ctx.cwd), held)]
+      : readSetupFiles(setupsRoot(ctx.cwd), held);
+  if (read().length === 0)
     throw new UsageError(
       'There are no setup files to push. Write one, or pull a DevTune setup with agentpicks pull.',
     );
   const devtune = await readSetups(ctx);
+  // Read again against what each linked file's setup holds, which the checks need.
+  const files = read(heldTools(devtune));
   let failed = 0;
   for (const file of files) if (!(await pushOne(file, devtune, ctx))) failed++;
   return failed === 0 ? 0 : 1;

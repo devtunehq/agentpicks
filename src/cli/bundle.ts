@@ -59,6 +59,8 @@ export const bundleSetupSchema = z.object({
   job: z.string().min(1),
   /** Set when the run asked a linked file's changes not yet pushed, so it can't file under its setup. */
   unpushed: z.boolean().optional(),
+  /** The catalogue tools the setup names by key that the run's early stop doesn't hold. */
+  unrecognised: z.array(z.string().min(1)).optional(),
 });
 
 export type BundleSetup = z.infer<typeof bundleSetupSchema>;

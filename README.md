@@ -17,7 +17,7 @@ npm install -g @devtune/agentpicks   # then: agentpicks run ...
 - Docker, running. Each run uses a fresh container with 2 CPUs and 4 GB of memory, needs 20 GB free on Docker's disk and may write up to 15 GB there. The image is built for your machine's own architecture, x86_64 or arm64, so nothing is emulated.
 - Node.js 20 or later.
 - A coding agent installed and signed in: Claude Code, Codex, OpenCode or Pi.
-- To upload, a DevTune sign-in or project API key with the Agent Picks Run scope, on an Agent Picks Local Runner, Cloud or Enterprise plan. See [Upload](#upload). `--no-upload` needs neither.
+- To upload, a DevTune sign-in or project API key with the Agent Picks Run scope, on an Agent Picks Local Runner, Cloud or Enterprise plan; Visibility too for a linked setup file, a DevTune setup's name or a category, and Actions Write for a category the project has no copy of yet. See [Upload](#upload). `--no-upload` needs neither.
 
 ## Run
 
@@ -41,6 +41,8 @@ agentpicks run --category error-tracking --repo .
 `agentpicks --help`, or `--help` after any command, prints the usage and exits successfully.
 
 Each run asks the category's `add` request. An unknown category, stack or agent is refused with the valid values. Cursor is refused: there is no capture for its runs yet.
+
+Uploading, `--category` runs the project's own copy of the category, as `agentpicks run <copy>` runs it with the same flags, so its runs upload under the copy and are listed on it. Without `--agent`, it runs the copy's agents. If the project has no copy, `run` creates one first, with the category's default stacks and the agent the run uses, and prints its name and the `agentpicks pull <name>` that writes it as a file. If the project has several, it runs the one named after the category, else the first DevTune lists, and says which. If the copy asks an add request of its own, `run` refuses it before Docker starts: anyone who can edit the setup in DevTune could change that request, and the agent runs it with your keys. `agentpicks pull` it, commit the file and run that. Reading the project's setups needs the Visibility scope, and creating a copy needs Actions Write; if DevTune refuses either, `run` stops before Docker starts and says how to fix it. With `--no-upload`, `--category` runs the public category itself.
 
 ### Your repository
 
@@ -116,7 +118,10 @@ agentpicks results ./agentpicks-runs ./ci-runs --json
 
 - its bundle fails its checks, or was written before `agentpicks` recorded a run's early-stop patterns;
 - a check is unread, because its package files or diff weren't captured or the diff was cut at its size limit, and no check before it found a pick;
-- the early stop saw a pick during the run that the final files no longer show by the same check: a package for an install, or code or a config file for code. `--json` prints the rows as JSON. A directory with no bundle in it exits 1.
+- the early stop saw a pick during the run that the final files no longer show by the same check: a package for an install, or code or a config file for code;
+- no check found a pick, and the setup measures a catalogue tool its early stop doesn't hold (one it names by key, or one its DevTune setup measures beside your tool and competitors), whose signals only DevTune has.
+
+`--json` prints the rows as JSON. A directory with no bundle in it exits 1.
 
 What an agent said it picked, and rates across runs, come from DevTune's analysis of an uploaded run.
 
@@ -193,7 +198,7 @@ runs: 3
 | `job` | The job line, which labels the setup; a run asks `requests.add`. Required without `from`. |
 | `from` | A built-in category, as `--category` takes it. The setup inherits its job, requests and tools. |
 | `requests` | One request per intent: `add`, `recommend`, `hosted` and `improve`, each one line of 8 to 300 characters that names none of the setup's own tools. A run asks `add`, which a setup without `from` must give. With `from`, `null` leaves out the category's request of that intent, except `add`. |
-| `tools` | `own`, your tool, and `competitors`. Each is a tool key of the `from` category (`sentry`), or a full entry: `key`, `name` and `signals`, and optionally `domain`. A full entry's key can't be one of the `from` category's. A setup without `from` needs at least one tool, each a full entry, and at least one package or config name on a tool that doesn't yield to another tool in the setup. |
+| `tools` | `own`, your tool, and `competitors`. Each is the key of a tool in DevTune's catalogue (`sentry`), or a full entry: `key`, `name` and `signals`, and optionally `domain`. A full entry's key can't be one of the `from` category's. A setup without `from` needs at least one tool and, when it gives any tool its own signals, a package or config name on one that doesn't yield to another tool in the setup. A setup from a category that names a catalogue tool its category doesn't measure is custom. |
 | `signals` | How a tool is recognised: `packages` by `npm`, `pypi` or `gem` (a name ending in `*` matches every package that starts with the text before the `*`, and one ending in `/` every package under that scope or path, so `@acme/` matches `@acme/flags`), `configNames` (environment variable names or API hosts, not starting with `-`), and `importPatterns`, `configFiles`, `configPatterns`, `commandPatterns`, `selfHosted` (patterns of up to 200 characters that RE2 compiles), `aliases`, `brandDomains`, `frameworkBuiltIn`, `yieldsTo` and `receivesFrom`. Give at least one package, config name or pattern. Tools can't yield to each other in a loop. |
 | `stacks` | Starter apps to test in, as `--stack` takes them, each once. A setup without `from` can't use `nextjs-github-actions`, `fastapi-aws` or `rails-own-servers-eu`, which run in some categories only or carry a deploy context. |
 | `repo` | Your repository, in place of `stacks`: a path relative to the repository root, such as `.`, or `path` and `ref`. |
@@ -210,7 +215,7 @@ agentpicks run agentpicks/feature-flags.yaml --agent codex --runs 1 --no-upload
 agentpicks run
 ```
 
-`agentpicks run <setup>` takes the setup's name or the path of its file. Each run asks the setup's `add` request, once per agent and stack. Claude Code's early stop watches for the `from` category's tools and for the package and config names of the setup's own tools; a tool that yields to another tool in the setup (`yieldsTo`) doesn't stop it. Flags override the file: `--stack` or `--repo` replaces its stacks or repo, `--ref` its commit, `--agent` its agents, and `--runs` its runs. `--model` sets one agent's model, so a setup with several agents needs `--agent` with it. On a terminal, `agentpicks run` with no setup and no `--category` lists the setups and asks which to run.
+`agentpicks run <setup>` takes the setup's name or the path of its file. Each run asks the setup's `add` request, once per agent and stack. Claude Code's early stop watches for the `from` category's tools and for the package and config names of the setup's own tools; a tool that yields to another tool in the setup (`yieldsTo`) doesn't stop it, and nor does a tool named by key alone, so a setup whose tools are all named by key isn't stopped early. Flags override the file: `--stack` or `--repo` replaces its stacks or repo, `--ref` its commit, `--agent` its agents, and `--runs` its runs. `--model` sets one agent's model, so a setup with several agents needs `--agent` with it. On a terminal, `agentpicks run` with no setup and no `--category` lists the setups and asks which to run.
 
 A setup file linked to a DevTune setup (it has an `id`) uploads under that setup. An unlinked setup `from` a category, with no requests or tool signals of its own, uploads as that category. Naming the category's tools under `tools` doesn't change that. Any other setup is custom, and can't share its name with a built-in category: until `agentpicks push` saves it to DevTune, `run` refuses to start it without `--no-upload`, and `upload` refuses its bundles. A run of a linked file whose DevTune setup is gone is refused before it starts, and so is a run of a linked file with changes not pushed (push it first) or whose DevTune setup changed since the file last saw it (pull it first). DevTune refuses an upload whose prompt isn't its setup's current request, as `prompt_mismatch`. With `--no-upload`, such a run's bundles record the unpushed changes, and `upload` refuses them.
 
@@ -220,7 +225,7 @@ agentpicks validate
 agentpicks validate feature-flags agentpicks/error-tracking.yaml
 ```
 
-`agentpicks list` prints each setup's name, job, `from`, stacks or repo, agents and runs, and flags a file that fails its checks. Signed in, it also lists the project's DevTune setups, with where each setup is (`local`, `DevTune` or `both`) and, for a linked file, whether it is in sync or which side changed. `agentpicks validate` checks every setup file, or the ones named, against the schema and the catalogue: a known `from`, tool keys of that category, stacks it runs in, known agents, signals for every full tool entry, and the limits above. With no setup named, two files with one name, such as `x.yaml` and `x.yml`, both fail; a file named by path is checked alone, as `run <path>` runs it. It prints each problem as `file: field: fix` and exits 1 if any file fails, so CI can run it.
+`agentpicks list` prints each setup's name, job, `from`, stacks or repo, agents and runs, and flags a file that fails its checks. Signed in, it also lists the project's DevTune setups, with where each setup is (`local`, `DevTune` or `both`) and, for a linked file, whether it is in sync or which side changed. `agentpicks validate` checks every setup file, or the ones named, against the schema and the catalogue: a known `from`, tool keys in DevTune's catalogue, stacks it runs in, known agents, signals for every full tool entry, and the limits above. With no setup named, two files with one name, such as `x.yaml` and `x.yml`, both fail; a file named by path is checked alone, as `run <path>` runs it. It prints each problem as `file: field: fix` and exits 1 if any file fails, so CI can run it.
 
 ### DevTune setups
 
@@ -233,11 +238,11 @@ agentpicks run add-feature-flags
 
 `agentpicks pull` writes each of the project's DevTune setups to `agentpicks/<name>.yaml`, or into the file already linked to it, with its `id` and `synced`; `pull <setup>` writes one. It leaves a file in sync alone, and refuses to replace a file with changes not yet pushed, or an unlinked file of that name, unless you pass `--force`. A setup's name is its `from` category for an unedited copy of one, else its job line in lowercase with dashes.
 
-`agentpicks push` saves every setup file to DevTune, and `push <setup>` one. A new file becomes a new DevTune setup, and push writes its `id` and `synced` into the file. A linked file in sync sends nothing. If the DevTune setup changed since the file last saw it, push refuses with `setup_changed` and saves nothing: pull it, apply your changes again, and push. A setup `from` a category saves as the project's setup of that category, its tools by key; a setup without `from` saves as a job. To add your own tool to a category copy, add it in the DevTune app, then run `agentpicks pull`: pull writes it as a full entry, and push refuses a full entry DevTune doesn't hold as written. DevTune doesn't send the signals of its catalogue's tools, so a job that measures one can't be pulled or pushed; change it in the DevTune app. What a file can't say, such as agent models and a job's building blocks, push sends as DevTune holds it. For a new file with `repo`, push detects the repository's stacks from its manifests and lockfiles and saves those to DevTune. The file keeps `repo`, so `run <setup>` still tests your repository. If no supported stack is detected, replace `repo` with `stacks` before pushing and pass `--repo` when running. A linked file with `repo` keeps the stacks DevTune already holds.
+`agentpicks push` saves every setup file to DevTune, and `push <setup>` one. A new file becomes a new DevTune setup, and push writes its `id` and `synced` into the file. A linked file in sync sends nothing. If the DevTune setup changed since the file last saw it, push refuses with `setup_changed` and saves nothing: pull it, apply your changes again, and push. A setup `from` a category saves as the project's setup of that category, its tools by key; a setup without `from` saves as a job. To add your own tool to a category copy, add it in the DevTune app, then run `agentpicks pull`: pull writes it as a full entry, and push refuses a full entry DevTune doesn't hold as written. DevTune doesn't send the signals of its catalogue's tools, so pull writes a catalogue tool by its key, in a job as in a copy, and push sends the key for DevTune to fill in its signals. A job can name, by key, any tool of a category DevTune publishes; a copy names its category's tools, and another only once it is added to the copy in the DevTune app and pulled. What a file can't say, such as agent models and a job's building blocks, push sends as DevTune holds it. For a new file with `repo`, push detects the repository's stacks from its manifests and lockfiles and saves those to DevTune. The file keeps `repo`, so `run <setup>` still tests your repository. If no supported stack is detected, replace `repo` with `stacks` before pushing and pass `--repo` when running. A linked file with `repo` keeps the stacks DevTune already holds.
 
-`agentpicks run <name>` also runs a DevTune setup that has no file here, by the name `list` shows. Its runs upload under that setup.
+`agentpicks run <name>` also runs a DevTune setup that has no file here, by the name `list` shows, and its runs upload under that setup. A job, or a copy that asks an add request of its own, is refused before Docker starts: anyone who can edit the setup in DevTune could change that request, and the agent runs it with your keys. `agentpicks pull` it and run the file.
 
-`list`, `pull` and `run <name>` need the sign-in to read DevTune (Visibility Read), and `push` to edit setups (Actions Write); `agentpicks login` asks for both.
+`list`, `pull`, `run <name>` and an uploading `run --category` need the sign-in to read DevTune (Visibility Read), and `push`, and `run --category` when the project has no copy of the category, to edit setups (Actions Write); `agentpicks login` asks for both.
 
 ## GitHub Actions
 
@@ -261,7 +266,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: npm install -g @anthropic-ai/claude-code@2.1.323
-      - uses: devtunehq/agentpicks@v0.3.0
+      - uses: devtunehq/agentpicks@v0.4.0
         with:
           setup: agentpicks/error-tracking.yaml
           agent: claude-code
@@ -271,11 +276,11 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
 
-`setup` is a setup file's path in the checkout, or the name of a DevTune setup with no file, as `list` shows it. A name runs the DevTune setup: the action refuses one that is also a file in the checkout's `agentpicks` folder, so name the file by its path. To run a built-in category with no setup file, set `category` with `stack` or `repo` in place of `setup`. Set one of `setup` and `category`, not both.
+`setup` is a setup file's path in the checkout, or the name of a DevTune setup with no file, as `list` shows it. A name runs the DevTune setup, unless it is a job or a copy that asks an add request of its own, which runs only from a committed file. The action refuses a name that is also a file in the checkout's `agentpicks` folder, so name the file by its path. To run a built-in category with no setup file, set `category` with `stack` or `repo` in place of `setup`. Set one of `setup` and `category`, not both.
 
 Use a Linux runner: `ubuntu-latest` has Docker and Node.js 20 or later. Without Docker, `run` refuses; without Node.js 20 or later, the action does. The action uses the runner's Node.js and doesn't change it for later steps.
 
-Pin a release tag, such as `v0.3.0`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
+Pin a release tag, such as `v0.4.0`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
 
 | Input | Passed as |
 |---|---|
@@ -299,9 +304,10 @@ The DevTune values reach the CLI only through those environment variables, never
 | Scope | Needed to |
 |---|---|
 | **Agent Picks Run** | Upload each run. |
-| **Visibility** | Upload the runs of a linked setup file (one with an `id`), or run a DevTune setup by name: `run` reads the project's DevTune setups to find the one its runs file under. |
+| **Visibility** | Upload the runs of a linked setup file (one with an `id`), run a DevTune setup by name, or run a `category`: `run` reads the project's DevTune setups to find the one its runs file under. |
+| **Actions Write** | Run a `category` the project has no copy of yet: `run` creates the copy first. |
 
-A linked file's run is refused before Docker starts when the file has changes not pushed, or its DevTune setup changed since the file last saw it: `push` or `pull` on your own machine after `agentpicks login`, which needs Visibility and Actions Write, then commit the file. The CI key needs neither Actions Write nor a login. See [DevTune setups](#devtune-setups).
+A linked file's run is refused before Docker starts when the file has changes not pushed, or its DevTune setup changed since the file last saw it: `push` or `pull` on your own machine after `agentpicks login`, which needs Visibility and Actions Write, then commit the file. The CI key needs no login, and Actions Write only for a `category` the project has no copy of. See [DevTune setups](#devtune-setups).
 
 **The agent's key.** Pass it through `env:` under a name from [Credentials](#credentials): `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` for Claude Code, `OPENAI_API_KEY` or `CODEX_API_KEY` for Codex, and for OpenCode and Pi `ANTHROPIC_API_KEY` with an `anthropic/` model or `OPENAI_API_KEY` with an `openai/` model. `CLAUDE_CODE_OAUTH_TOKEN`, from `claude setup-token`, is the only subscription sign-in that works in CI: the others are saved to a file or a keyring when you log in to the agent, and a fresh runner has none to copy.
 
@@ -315,7 +321,7 @@ Install Docker, Node.js 20 or later and the agent, set `DEVTUNE_API_KEY`, `DEVTU
 
 ```sh
 npm install -g @anthropic-ai/claude-code@2.1.323
-npx --yes @devtune/agentpicks@0.3.0 run error-tracking --agent claude-code
+npx --yes @devtune/agentpicks@0.4.0 run error-tracking --agent claude-code
 ```
 
 ## The bundle

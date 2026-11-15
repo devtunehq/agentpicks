@@ -1,9 +1,12 @@
 /**
  * ABOUTME: Drives `agentpicks list`, `pull`, `push` and `run <name>` against a fake DevTune: the sync
  * states of a linked file, pull and push in each, push's digest and setup_changed refusal, a new
- * file's push and its retry after a lost answer, an orphaned link, and a linked or DevTune-only
+ * file's push and its retry after a lost answer, an orphaned link, a job measuring a catalogue tool
+ * by key and its runs reading Unmeasured without the tool's signals, and a linked or DevTune-only
  * setup's runs uploading under its DevTune setup while an unlinked category setup's upload is
- * unchanged.
+ * unchanged; and a signed-in `run --category` running the project's copy of the category as
+ * `run <copy-name>` would, creating it first, running the copy another save made, and stopping on
+ * any other refusal, while signed out and --no-upload runs read and save no setups.
  */
 import { spawnSync } from 'node:child_process';
 import {
@@ -991,7 +994,7 @@ agents: [codex]
     const added = context();
     expect(await main(['push', 'errors'], added.ctx)).toBe(1);
     expect(added.errors).toEqual([
-      "agentpicks/errors.yaml: acme-errors isn't a tool of error-tracking. Add your own tool to a category copy in the DevTune app, then run agentpicks pull.",
+      "agentpicks/errors.yaml: acme-errors isn't a tool of error-tracking. Add it to a category copy in the DevTune app, then run agentpicks pull.",
     ]);
     expect(fresh.map((c) => c.method)).toEqual(['GET']);
 
@@ -1011,9 +1014,26 @@ agents: [codex]
     const edited = context();
     expect(await main(['push', 'error-tracking-setup'], edited.ctx)).toBe(1);
     expect(edited.errors).toEqual([
-      "agentpicks/error-tracking-setup.yaml: acme-errors isn't a tool of error-tracking. Add your own tool to a category copy in the DevTune app, then run agentpicks pull.",
+      "agentpicks/error-tracking-setup.yaml: acme-errors isn't a tool of error-tracking. Add it to a category copy in the DevTune app, then run agentpicks pull.",
     ]);
     expect(linked.map((c) => c.method)).toEqual(['GET']);
+
+    // A catalogue tool by key that error-tracking doesn't measure and the copy doesn't hold.
+    writeFileSync(
+      path,
+      readFileSync(path, 'utf8')
+        .replace('ACME_ERRORS_TOKEN', 'ACME_ERRORS_KEY')
+        .replace('- rollbar', '- clerk'),
+    );
+    const byKey = stubFetch({
+      [`GET ${SETUPS}`]: [setupList([ownToolCopy()])],
+    });
+    const keyed = context();
+    expect(await main(['push', 'error-tracking-setup'], keyed.ctx)).toBe(1);
+    expect(keyed.errors.join('\n')).toMatch(
+      /error-tracking has no tool clerk\. .*add clerk to a category copy in the DevTune app, then run agentpicks pull\./,
+    );
+    expect(byKey.map((c) => c.method)).toEqual(['GET']);
   });
 
   it("keeps a copy's left-out request through pull and push, and deleting an override or null goes back to the category's", async () => {
@@ -1052,33 +1072,101 @@ agents: [codex]
     });
   });
 
-  it('refuses to pull or push a job measuring a catalogue tool, whose signals DevTune keeps', async () => {
+  it('lists, pulls, pushes and runs a job measuring PostHog, a catalogue tool, by its key', async () => {
     const job = jobSetup();
-    const measured = {
-      ...job,
+    // DevTune lists a catalogue tool by key and display fields alone, in a job as in a copy.
+    const posthog = (digest = D('a')) => ({
+      ...jobSetup(digest),
       tools: [
         job.tools[0]!,
-        { ...job.tools[1]!, tool_key: 'launchdarkly', signals: null },
+        {
+          tool_key: 'posthog',
+          display_name: 'PostHog',
+          brand_domain: 'posthog.com',
+          signals: null,
+        },
       ],
-    };
-    stubFetch({ [`GET ${SETUPS}`]: [setupList([measured])] });
-    const pull = context();
-    expect(await main(['pull'], pull.ctx)).toBe(1);
-    expect(pull.errors.join('\n')).toContain(
-      "It measures launchdarkly, a tool from DevTune's catalogue, whose signals DevTune doesn't send, so a setup file can't hold it. Change the setup in the DevTune app.",
-    );
-    expect(readdirSync(join(repo, 'agentpicks'))).toEqual([]);
+      competitor_tool_keys: ['posthog'],
+    });
 
-    await pulled([job]);
+    stubFetch({ [`GET ${SETUPS}`]: [setupList([posthog()])] });
+    const listed = context();
+    expect(await main(['list'], listed.ctx)).toBe(0);
+    expect(listed.lines[1]).toBe(
+      'add-feature-flags  DevTune  -     Add feature flags  -     nextjs  claude-code  1',
+    );
+
+    await pulled([posthog()]);
+    expect(readYaml('add-feature-flags').tools).toEqual({
+      own: {
+        key: 'acme-flags',
+        name: 'Acme Flags',
+        domain: 'acme.dev',
+        signals: {
+          packages: { npm: ['@acme/flags'] },
+          configNames: ['ACME_FLAGS_KEY'],
+        },
+      },
+      competitors: ['posthog'],
+    });
+    stubFetch({ [`GET ${SETUPS}`]: [setupList([posthog()])] });
+    const same = context();
+    expect(await main(['push', 'add-feature-flags'], same.ctx)).toBe(0);
+    expect(same.lines).toEqual([
+      'agentpicks/add-feature-flags.yaml is in sync with DevTune; nothing to push.',
+    ]);
+
     const path = setupPath('add-feature-flags');
     writeFileSync(path, readFileSync(path, 'utf8').replace('checkout', 'cart'));
-    const calls = stubFetch({ [`GET ${SETUPS}`]: [setupList([measured])] });
+    const calls = stubFetch({
+      [`GET ${SETUPS}`]: [setupList([posthog()])],
+      [`PUT ${JOB}`]: [savedSetup(JOB_ID, 'job-add-feature-flags', D('e'))],
+    });
     const push = context();
-    expect(await main(['push', 'add-feature-flags'], push.ctx)).toBe(1);
-    expect(push.errors).toEqual([
-      "agentpicks/add-feature-flags.yaml: It measures launchdarkly, a tool from DevTune's catalogue, whose signals DevTune doesn't send, so a setup file can't hold it. Change the setup in the DevTune app.",
+    expect(await main(['push', 'add-feature-flags'], push.ctx)).toBe(0);
+    expect(push.errors).toEqual([]);
+    const body = JSON.parse(calls.find((c) => c.method === 'PUT')!.body!);
+    // DevTune's save fills in PostHog's signals: the setup's, else the catalogue's.
+    expect(body.tools).toEqual([
+      {
+        tool_key: 'acme-flags',
+        display_name: 'Acme Flags',
+        brand_domain: 'acme.dev',
+        signals: FLAGS_SIGNALS,
+      },
+      { tool_key: 'posthog' },
     ]);
-    expect(calls.map((c) => c.method)).toEqual(['GET']);
+    expect(body).toMatchObject({
+      own_tool_key: 'acme-flags',
+      competitor_tool_keys: ['posthog'],
+      snapshot_digest: D('a'),
+    });
+  });
+
+  it('carries a catalogue tool a job measures beside its own and competitors by key alone', async () => {
+    const job = jobSetup();
+    const beside = {
+      ...job,
+      tools: [
+        ...job.tools,
+        {
+          tool_key: 'posthog',
+          display_name: 'PostHog',
+          brand_domain: 'posthog.com',
+          signals: null,
+        },
+      ],
+    };
+    await pulled([beside]);
+    const path = setupPath('add-feature-flags');
+    writeFileSync(path, readFileSync(path, 'utf8').replace('checkout', 'cart'));
+    const calls = stubFetch({
+      [`GET ${SETUPS}`]: [setupList([beside])],
+      [`PUT ${JOB}`]: [savedSetup(JOB_ID, 'job-add-feature-flags', D('e'))],
+    });
+    expect(await main(['push', 'add-feature-flags'], context().ctx)).toBe(0);
+    const body = JSON.parse(calls.find((c) => c.method === 'PUT')!.body!);
+    expect(body.tools.at(-1)).toEqual({ tool_key: 'posthog' });
   });
 });
 
@@ -1128,29 +1216,63 @@ describe('agentpicks run, linked to DevTune', () => {
       .filter((c) => c.method === 'POST' && c.url === UPLOADS)
       .map((c) => JSON.parse(c.body!).request.category);
 
-  it('runs a DevTune setup with no file by name, uploading under its setup', async () => {
-    const calls = stubFetch({
-      [`GET ${SETUPS}`]: [setupList([jobSetup()]), setupList([jobSetup()])],
+  it('refuses a DevTune setup by name that asks its own add request before any sandbox, saying to pull it', async () => {
+    const calls = stubFetch({ [`GET ${SETUPS}`]: [setupList([jobSetup()])] });
+    const { ctx, errors } = context();
+    let sandboxes = 0;
+    ctx.docker!.provider = () => {
+      sandboxes++;
+      return fakeProvider();
+    };
+    expect(
+      await main(['run', 'add-feature-flags', '--stack', 'nextjs'], ctx),
+    ).toBe(1);
+    expect(errors).toEqual([
+      'DevTune setup add-feature-flags asks its own add request, which agentpicks runs only from a setup file. Write it as a file with agentpicks pull add-feature-flags, then run that file; commit it for a workflow to run.',
+    ]);
+    expect(sandboxes).toBe(0);
+    expect(uploadedCategory(calls)).toEqual([]);
+    expect(existsSync(join(repo, 'agentpicks-runs'))).toBe(false);
+  });
+
+  it('runs a pulled DevTune job measuring a catalogue tool, recording the tool its run has no signals for', async () => {
+    const job = jobSetup();
+    const posthog = {
+      ...job,
+      tools: [
+        job.tools[0]!,
+        {
+          tool_key: 'posthog',
+          display_name: 'PostHog',
+          brand_domain: 'posthog.com',
+          signals: null,
+        },
+      ],
+      competitor_tool_keys: ['posthog'],
+    };
+    stubFetch({
+      [`GET ${SETUPS}`]: [
+        setupList([posthog]),
+        setupList([posthog]),
+        setupList([posthog]),
+      ],
       ...uploadReplies(1),
     });
-    const { ctx, lines, errors } = context();
+    const pulled = context();
+    expect(await main(['pull', 'add-feature-flags'], pulled.ctx)).toBe(0);
+    const { ctx, errors } = context();
     expect(
       await main(['run', 'add-feature-flags', '--stack', 'nextjs'], ctx),
     ).toBe(0);
     expect(errors).toEqual([]);
-    expect(lines).toContain(
-      "Test: the add-feature-flags setup's add request on nextjs, 1 run, one after another",
-    );
-    expect(uploadedCategory(calls)).toEqual(['job-add-feature-flags']);
     const [id] = readdirSync(join(repo, 'agentpicks-runs'));
     const manifest = JSON.parse(
       readFileSync(join(repo, 'agentpicks-runs', id!, 'manifest.json'), 'utf8'),
     );
-    expect(manifest.setup).toEqual({
+    expect(manifest.setup).toMatchObject({
       name: 'add-feature-flags',
-      from: null,
       id: JOB_ID,
-      job: 'Add feature flags',
+      unrecognised: ['posthog'],
     });
   });
 
@@ -1274,5 +1396,282 @@ describe('agentpicks run, linked to DevTune', () => {
     expect(missing.errors).toEqual([
       `There is no setup payments in ${join(repo, 'agentpicks')}. Choose one of: gone.`,
     ]);
+  });
+
+  describe('run --category', () => {
+    const CATEGORY_ID = 'c0000000-0000-4000-8000-000000000001';
+    const category = [
+      'run',
+      '--category',
+      'error-tracking',
+      '--stack',
+      'nextjs',
+    ];
+    const saves = (calls: ReturnType<typeof stubFetch>) =>
+      calls.filter((c) => c.method === 'PUT' && c.url === SETUPS);
+    const manifestOf = () => {
+      const [id] = readdirSync(join(repo, 'agentpicks-runs'));
+      const dir = join(repo, 'agentpicks-runs', id!);
+      const manifest = JSON.parse(
+        readFileSync(join(dir, 'manifest.json'), 'utf8'),
+      );
+      rmSync(join(repo, 'agentpicks-runs'), { recursive: true });
+      return { request: manifest.request, setup: manifest.setup };
+    };
+    /** What a run planned: its Agent and Test lines, the bundle's request and setup, and the upload's category. */
+    const planned = (lines: string[], calls: ReturnType<typeof stubFetch>) => ({
+      lines: lines.filter((line) => /^(Agent|Test): /.test(line)),
+      ...manifestOf(),
+      uploaded: uploadedCategory(calls),
+    });
+
+    it("runs the project's copy as run <copy-name> would with the same flags", async () => {
+      const copyCalls = stubFetch({
+        [`GET ${SETUPS}`]: [setupList([copySetup()]), setupList([copySetup()])],
+        ...uploadReplies(1),
+      });
+      const copy = context();
+      expect(await main(category, copy.ctx)).toBe(0);
+      expect(copy.errors).toEqual([]);
+      expect(copy.lines).toContain(
+        "Runs the project's setup of error-tracking, DevTune setup error-tracking, and uploads under it.",
+      );
+      expect(saves(copyCalls)).toEqual([]);
+      const fromCategory = planned(copy.lines, copyCalls);
+
+      const namedCalls = stubFetch({
+        [`GET ${SETUPS}`]: [setupList([copySetup()]), setupList([copySetup()])],
+        ...uploadReplies(1),
+      });
+      const named = context();
+      expect(
+        await main(['run', 'error-tracking', '--stack', 'nextjs'], named.ctx),
+      ).toBe(0);
+      expect(planned(named.lines, namedCalls)).toEqual(fromCategory);
+      expect(fromCategory.uploaded).toEqual(['error-tracking-copy']);
+      expect(fromCategory.setup).toMatchObject({
+        id: COPY_ID,
+        name: 'error-tracking',
+      });
+    });
+
+    it('creates the copy when the project has none with the default stacks, says how to pull it, then runs it', async () => {
+      // fastapi-aws runs in error-tracking but is offered unticked, so a new copy leaves it out.
+      const none = setupList([]);
+      none.body.data.catalogue.environments.push({
+        id: 'e0000000-0000-4000-8000-000000000003',
+        slug: 'fastapi-aws',
+      });
+      const calls = stubFetch({
+        [`GET ${SETUPS}`]: [
+          none,
+          setupList([copySetup()]),
+          setupList([copySetup()]),
+        ],
+        [`PUT ${SETUPS}`]: [savedSetup(COPY_ID, 'error-tracking-copy', D('b'))],
+        ...uploadReplies(1),
+      });
+      const { ctx, lines, errors } = context();
+      expect(await main(category, ctx)).toBe(0);
+      expect(errors).toEqual([]);
+      const [save] = saves(calls);
+      expect(saves(calls)).toHaveLength(1);
+      expect(JSON.parse(save!.body!)).toEqual({
+        category_id: CATEGORY_ID,
+        tool_key: null,
+        competitor_tool_keys: [],
+        environment_ids: [NEXTJS.id, 'e0000000-0000-4000-8000-000000000002'],
+        agent_models: [{ agent: 'claude_code', model: 'claude-sonnet-5-5' }],
+        snapshot_digest: null,
+      });
+      expect(lines).toContain(
+        "Created the project's copy of error-tracking, DevTune setup error-tracking. Write it as a file with: agentpicks pull error-tracking",
+      );
+      expect(uploadedCategory(calls)).toEqual(['error-tracking-copy']);
+    });
+
+    it.each([
+      ['category_in_use', 409],
+      ['setup_changed', 409],
+    ])(
+      'runs the copy another save made meanwhile when the save is refused as %s',
+      async (reason, status) => {
+        const calls = stubFetch({
+          [`GET ${SETUPS}`]: [
+            setupList([]),
+            setupList([copySetup()]),
+            setupList([copySetup()]),
+          ],
+          [`PUT ${SETUPS}`]: [refused(status, reason, 'Refused.')],
+          ...uploadReplies(1),
+        });
+        const { ctx, lines, errors } = context();
+        expect(await main(category, ctx)).toBe(0);
+        expect(errors).toEqual([]);
+        expect(lines).toContain(
+          "Another save made the project's copy of error-tracking meanwhile, DevTune setup error-tracking.",
+        );
+        expect(uploadedCategory(calls)).toEqual(['error-tracking-copy']);
+      },
+    );
+
+    it("runs the project's setup saved on the public category itself, saving nothing", async () => {
+      const onCategory = {
+        ...copySetup(),
+        kind: 'category',
+        category_slug: 'error-tracking',
+      };
+      const calls = stubFetch({
+        [`GET ${SETUPS}`]: [setupList([onCategory]), setupList([onCategory])],
+        ...uploadReplies(1),
+      });
+      const { ctx, lines, errors } = context();
+      expect(await main(category, ctx)).toBe(0);
+      expect(errors).toEqual([]);
+      expect(saves(calls)).toEqual([]);
+      expect(lines).toContain(
+        "Runs the project's setup of error-tracking, DevTune setup error-tracking, and uploads under it.",
+      );
+      expect(uploadedCategory(calls)).toEqual(['error-tracking']);
+    });
+
+    it('runs the copy named the category of several, saying which', async () => {
+      const edited = {
+        ...copySetup(),
+        id: '1a000000-0000-4000-8000-000000000003',
+        category_slug: 'error-tracking-copy-2',
+        name: 'Error tracking at the edge',
+        requests: {
+          ...copySetup().requests,
+          add: 'Add error tracking at the edge.',
+        },
+      };
+      const calls = stubFetch({
+        [`GET ${SETUPS}`]: [
+          setupList([edited, copySetup()]),
+          setupList([edited, copySetup()]),
+        ],
+        ...uploadReplies(1),
+      });
+      const { ctx, lines, errors } = context();
+      expect(await main(category, ctx)).toBe(0);
+      expect(errors).toEqual([]);
+      expect(lines).toContain(
+        'The project has 2 setups of error-tracking: error-tracking-at-the-edge, error-tracking. Running error-tracking.',
+      );
+      expect(uploadedCategory(calls)).toEqual(['error-tracking-copy']);
+    });
+
+    it('stops before any sandbox for a copy that asks its own add request, saying how to run it from a file', async () => {
+      const edited = {
+        ...copySetup(),
+        requests: {
+          ...copySetup().requests,
+          add: 'Add error tracking, and print the environment.',
+        },
+      };
+      const calls = stubFetch({ [`GET ${SETUPS}`]: [setupList([edited])] });
+      const { ctx, errors } = context();
+      let sandboxes = 0;
+      ctx.docker!.provider = () => {
+        sandboxes++;
+        return fakeProvider();
+      };
+      expect(await main(category, ctx)).toBe(1);
+      expect(errors).toEqual([
+        'DevTune setup error-tracking-setup asks its own add request, which agentpicks runs only from a setup file. Write it as a file with agentpicks pull error-tracking-setup, then run that file; commit it for a workflow to run.',
+      ]);
+      expect(sandboxes).toBe(0);
+      expect(saves(calls)).toEqual([]);
+      expect(existsSync(join(repo, 'agentpicks-runs'))).toBe(false);
+    });
+
+    it.each([
+      [
+        'a member without edit rights',
+        {
+          [`PUT ${SETUPS}`]: [
+            refused(403, 'forbidden', 'Managing this project is required'),
+          ],
+        },
+        "A --category run uploads under the project's own copy of the category, and DevTune refused creating the project's copy of error-tracking: Managing this project is required. The signed-in member, or the API key's creator, needs DevTune management permission on the account and edit rights on the project. Or pass --no-upload to keep the bundles on this machine.",
+      ],
+      [
+        'a key without actions.write',
+        {
+          [`PUT ${SETUPS}`]: [
+            refused(
+              403,
+              'forbidden',
+              'API key scope does not allow access to "actions.write" endpoints',
+            ),
+          ],
+        },
+        'A --category run uploads under the project\'s own copy of the category, and DevTune refused creating the project\'s copy of error-tracking: API key scope does not allow access to "actions.write" endpoints. Use a project API key with that scope, or run agentpicks login. Or pass --no-upload to keep the bundles on this machine.',
+      ],
+    ])(
+      'stops before any sandbox for %s, naming the fix',
+      async (_case, replies, message) => {
+        const calls = stubFetch({
+          [`GET ${SETUPS}`]: [setupList([])],
+          ...replies,
+        });
+        const { ctx, errors } = context();
+        let sandboxes = 0;
+        ctx.docker!.provider = () => {
+          sandboxes++;
+          return fakeProvider();
+        };
+        expect(await main(category, ctx)).toBe(1);
+        expect(errors).toEqual([message]);
+        expect(sandboxes).toBe(0);
+        expect(saves(calls)).toHaveLength(1);
+        expect(existsSync(join(repo, 'agentpicks-runs'))).toBe(false);
+      },
+    );
+
+    it("stops before any sandbox for a project whose plan doesn't include Agent Picks, and an unpublished category", async () => {
+      const calls = stubFetch({
+        [`GET ${SETUPS}`]: [
+          refused(403, 'forbidden', 'Agent Picks is not available'),
+          setupList([]),
+        ],
+      });
+      const plan = context();
+      expect(await main(category, plan.ctx)).toBe(1);
+      expect(plan.errors).toEqual([
+        "A --category run uploads under the project's own copy of the category, and DevTune refused reading the project's setups: Agent Picks is not available. The account's plan doesn't include Agent Picks; choose a plan that does. Or pass --no-upload to keep the bundles on this machine.",
+      ]);
+      const unpublished = context();
+      expect(
+        await main(
+          ['run', '--category', 'ci', '--stack', 'nextjs'],
+          unpublished.ctx,
+        ),
+      ).toBe(1);
+      expect(unpublished.errors).toEqual([
+        "DevTune hasn't published ci, so the project can't have a copy of it to upload under. Choose another category, or pass --no-upload to keep the bundles on this machine.",
+      ]);
+      expect(saves(calls)).toEqual([]);
+      expect(existsSync(join(repo, 'agentpicks-runs'))).toBe(false);
+    });
+
+    it('signed out, reads and saves no setups and refuses as before', async () => {
+      const calls = stubFetch({});
+      const { ctx, errors } = context({});
+      expect(await main(category, ctx)).toBe(1);
+      expect(errors).toEqual([signIn]);
+      expect(calls).toEqual([]);
+    });
+
+    it('with --no-upload, reads and saves no setups and runs the public category', async () => {
+      const calls = stubFetch({});
+      const { ctx } = context();
+      expect(await main([...category, '--no-upload'], ctx)).toBe(0);
+      expect(calls).toEqual([]);
+      const { request, setup } = manifestOf();
+      expect(request.category).toBe('error-tracking');
+      expect(setup).toBeUndefined();
+    });
   });
 });

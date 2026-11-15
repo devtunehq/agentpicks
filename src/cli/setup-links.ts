@@ -10,7 +10,14 @@ import { dirname } from 'node:path';
 
 import { parseDocument } from 'yaml';
 
-import { devtuneSetupFile, devtuneSetupNames, fileDigest } from '../setup/link';
+import { findCategoryRequests } from '../catalogue/categories';
+import type { HeldTools } from '../setup/files';
+import {
+  devtuneSetupFile,
+  devtuneSetupNames,
+  fileDigest,
+  hasOwnTools,
+} from '../setup/link';
 import { resolveSetup, type ResolvedSetup } from '../setup/resolve';
 import type { SetupFile } from '../setup/schema';
 import type { RunPlan } from './args';
@@ -40,6 +47,11 @@ export async function readSetups(
   const target = devtuneTarget(ctx.io, purpose);
   const list = await readDevtuneSetups(target);
   return { target, list, names: devtuneSetupNames(list.setups) };
+}
+
+/** The tools each DevTune setup holds, by id, for checking the files linked to them. */
+export function heldTools(setups: DevtuneSetups): HeldTools {
+  return (id) => setups.list.setups.find((setup) => setup.id === id)?.tools;
 }
 
 /** The DevTune setup `arg` names: by its name, its id or its category slug. */
@@ -80,6 +92,14 @@ export function orphanedMessage(shown: string, id: string) {
   return `${shown} is linked to DevTune setup ${id}, which the project no longer has. Remove id and synced from it to push it as a new setup, or delete the file.`;
 }
 
+/** A setup a run plans from: a file's, or a DevTune setup's with no file. */
+export interface RunSetup {
+  path: string;
+  name: string;
+  root: string;
+  setup: ResolvedSetup;
+}
+
 /**
  * A DevTune setup `name` names, as a setup a run can plan from, when no file has that name: null
  * when there is no sign-in or no such setup, so the caller refuses as it would without DevTune.
@@ -88,12 +108,7 @@ export async function devtuneRunSetup(
   name: string,
   root: string,
   ctx: CliContext,
-): Promise<{
-  path: string;
-  name: string;
-  root: string;
-  setup: ResolvedSetup;
-} | null> {
+): Promise<RunSetup | null> {
   let setups: DevtuneSetups;
   try {
     setups = await readSetups(ctx);
@@ -103,17 +118,39 @@ export async function devtuneRunSetup(
     throw error;
   }
   const setup = findDevtuneSetup(setups, name);
-  if (!setup) return null;
-  const shown = `DevTune setup ${setups.names.get(setup.id)}`;
+  return setup ? runSetupOf(setups, setup, root) : null;
+}
+
+/**
+ * One of the project's DevTune setups as a setup a run can plan from; refuses one that can't run as
+ * it stands, and one that asks an add request of its own (a job, or an edited copy): anyone who can
+ * edit the setup in DevTune could write that request, and the agent runs it with this machine's keys,
+ * so it runs only from a file on this machine.
+ */
+export function runSetupOf(
+  setups: DevtuneSetups,
+  setup: DevtuneSetup,
+  root: string,
+): RunSetup {
+  const name = setups.names.get(setup.id)!;
+  const shown = `DevTune setup ${name}`;
   const mapped = devtuneSetupFile(setup);
   if ('problem' in mapped) throw new UsageError(`${shown}: ${mapped.problem}`);
-  const resolved = resolveSetup(setups.names.get(setup.id)!, {
-    ...mapped.file,
-    id: setup.id,
-  });
+  const resolved = resolveSetup(
+    name,
+    { ...mapped.file, id: setup.id },
+    setup.tools,
+  );
   if (!('setup' in resolved))
     throw new UsageError(
-      `${shown} can't run as it stands: ${resolved.problems.map((p) => `${p.field}: ${p.message}`).join(' ')} Pull it with agentpicks pull ${setups.names.get(setup.id)}, fix the file, and run that.`,
+      `${shown} can't run as it stands: ${resolved.problems.map((p) => `${p.field}: ${p.message}`).join(' ')} Pull it with agentpicks pull ${name}, fix the file, and run that.`,
+    );
+  const published = resolved.setup.from
+    ? findCategoryRequests(resolved.setup.from)?.prompts[0].text
+    : undefined;
+  if (resolved.setup.request.text !== published)
+    throw new UsageError(
+      `${shown} asks its own add request, which agentpicks runs only from a setup file. Write it as a file with agentpicks pull ${name}, then run that file; commit it for a workflow to run.`,
     );
   return {
     path: shown,
@@ -178,6 +215,11 @@ export async function linkUploads(
         }
       : plan;
   if (setup.id === null) {
+    // Push can't save a copy's tools beyond its category's: they are added in the DevTune app.
+    if (setup.customReason && content && hasOwnTools(content))
+      throw new UsageError(
+        `${shown} is a custom setup (${setup.customReason}), so its runs have no DevTune setup to upload under, and push can't save tools ${setup.from} doesn't have. Add them to a category copy in the DevTune app, run agentpicks pull, and run the pulled setup, or pass --no-upload to keep the bundles on this machine.`,
+      );
     if (setup.customReason)
       throw new UsageError(
         `${shown} is a custom setup (${setup.customReason}), so its runs have no DevTune setup to upload under. Run agentpicks push ${setup.name} to save it to DevTune first, or pass --no-upload to keep the bundles on this machine.`,

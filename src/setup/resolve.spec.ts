@@ -425,7 +425,7 @@ describe('resolveSetup', () => {
       problems({
         from: 'error-tracking',
         tools: {
-          own: 'clerk',
+          own: 'nobody-errors',
           competitors: [
             { key: 'bare', name: 'Bare', signals: {} },
             'sentry',
@@ -438,7 +438,7 @@ describe('resolveSetup', () => {
       {
         field: 'tools.own',
         message: expect.stringMatching(
-          /^error-tracking has no tool clerk\. Use one of sentry, /,
+          /^error-tracking has no tool nobody-errors\. Use one of sentry, .*, or add nobody-errors to a category copy in the DevTune app, then run agentpicks pull\.$/,
         ),
       },
       {
@@ -456,15 +456,151 @@ describe('resolveSetup', () => {
       problems({
         job: 'Add flags',
         requests: { add: 'Add flags.' },
-        tools: { own: 'sentry' },
+        tools: { own: 'acme-flags' },
       }),
     ).toEqual([
       {
         field: 'tools.own',
         message:
-          'sentry is a tool key, which names a tool of the from category. Without from, give the full entry: key, name and signals, and optionally domain.',
+          "acme-flags isn't a tool in this version of agentpicks' catalogue. Give the full entry: key, name and signals, and optionally domain; or, for a tool DevTune's catalogue has added since, update agentpicks.",
       },
     ]);
+  });
+
+  it('takes a catalogue tool by key in a job or a copy, which its runs here leave for DevTune to recognise', () => {
+    const job = resolveSetup('flags', {
+      job: 'Add feature flags',
+      requests: { add: 'Add feature flags to this app.' },
+      tools: {
+        own: {
+          key: 'acme-flags',
+          name: 'Acme Flags',
+          signals: { packages: { npm: ['@acme/flags'] } },
+        },
+        competitors: ['posthog'],
+      },
+      stacks: ['nextjs'],
+    });
+    expect('setup' in job && job.setup.unrecognised).toEqual(['posthog']);
+
+    // A copy recognises its category's tools by its early stop, and is custom once it measures another, which
+    // only a copy that holds it can: one added in the DevTune app.
+    const copyFile = {
+      id: '11111111-1111-4111-8111-111111111111',
+      from: 'error-tracking',
+      tools: { own: 'sentry', competitors: ['clerk'] },
+      stacks: ['nextjs'],
+    };
+    const clerk = { tool_key: 'clerk', display_name: 'Clerk', signals: null };
+    const copy = resolveSetup('my-errors', copyFile, [clerk]);
+    expect('setup' in copy && copy.setup).toMatchObject({
+      unrecognised: ['clerk'],
+      customReason: "it measures clerk, which error-tracking doesn't",
+    });
+    expect(resolveSetup('my-errors', copyFile, [])).toEqual({
+      problems: [
+        {
+          field: 'tools.competitors[0]',
+          message: expect.stringMatching(
+            /^error-tracking has no tool clerk\. Use one of .*, or add clerk to a category copy in the DevTune app, then run agentpicks pull\.$/,
+          ),
+        },
+      ],
+    });
+    // Unlinked, there is no copy to hold it; linked but DevTune unread, push checks it.
+    const { id: _id, ...unlinked } = copyFile;
+    expect(resolveSetup('my-errors', unlinked)).toHaveProperty('problems', [
+      expect.objectContaining({ field: 'tools.competitors[0]' }),
+    ]);
+    expect(resolveSetup('my-errors', copyFile)).toHaveProperty('setup');
+    const unedited = resolveSetup('error-tracking', {
+      from: 'error-tracking',
+      tools: { own: 'sentry' },
+      stacks: ['nextjs'],
+    });
+    expect('setup' in unedited && unedited.setup).toMatchObject({
+      unrecognised: [],
+      customReason: null,
+    });
+  });
+
+  it("counts a catalogue tool the linked setup measures beside your tool and competitors as one a run here can't recognise", () => {
+    const job = {
+      job: 'Add feature flags',
+      requests: { add: 'Add feature flags to this app.' },
+      tools: {
+        own: {
+          key: 'acme-flags',
+          name: 'Acme Flags',
+          signals: { packages: { npm: ['@acme/flags'] } },
+        },
+      },
+      stacks: ['nextjs'],
+    };
+    // PostHog is neither yours nor a competitor, so the file can't name it, and DevTune sends no signals for it.
+    const held = [
+      { tool_key: 'acme-flags', display_name: 'Acme Flags', signals: {} },
+      { tool_key: 'posthog', display_name: 'PostHog', signals: null },
+    ];
+    expect(resolveSetup('flags', job, held)).toMatchObject({
+      setup: { unrecognised: ['posthog'] },
+    });
+    expect(resolveSetup('flags', job)).toMatchObject({
+      setup: { unrecognised: [] },
+    });
+  });
+
+  it("takes a key DevTune holds without signals as a catalogue tool, checks requests against a key's names, and needs no early stop for one", () => {
+    const job = {
+      job: 'Add feature flags',
+      requests: { add: 'Add feature flags to this app.' },
+      tools: {
+        own: {
+          key: 'acme-flags',
+          name: 'Acme Flags',
+          signals: {
+            packages: { npm: ['@acme/flags'] },
+            yieldsTo: ['hogflags'],
+          },
+        },
+        competitors: ['hogflags'],
+      },
+      stacks: ['nextjs'],
+    };
+    // A key this version doesn't know, which the linked DevTune setup holds as a catalogue tool. Acme Flags yields
+    // to it, so no entry stops a run early, which a tool by key excuses.
+    const held = [
+      { tool_key: 'hogflags', display_name: 'Hog Flags', signals: null },
+    ];
+    expect(resolveSetup('flags', job, held)).toMatchObject({
+      setup: { unrecognised: ['hogflags'] },
+    });
+    expect(resolveSetup('flags', job)).toEqual({
+      problems: [
+        {
+          field: 'tools.competitors[0]',
+          message: expect.stringMatching(/update agentpicks\.$/),
+        },
+      ],
+    });
+    // A request naming the tool by its key or by DevTune's name for it.
+    for (const text of ['Would hogflags fit?', 'Would Hog Flags fit?'])
+      expect(
+        resolveSetup(
+          'flags',
+          { ...job, requests: { ...job.requests, recommend: text } },
+          held,
+        ),
+      ).toEqual({
+        problems: [
+          {
+            field: 'requests.recommend',
+            message: expect.stringMatching(
+              /^It names Hog Flags, a tool this setup measures/,
+            ),
+          },
+        ],
+      });
   });
 
   it('refuses a stack the category, or a setup without from, doesn’t run in', () => {
