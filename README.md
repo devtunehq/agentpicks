@@ -95,6 +95,8 @@ agentpicks upload ./agentpicks-runs/<run id>
 
 `agentpicks login` signs in to DevTune in your browser, where you choose the project and approve its scopes. Uploading needs Agent Picks Run; `login` prints every scope the sign-in holds. If no browser opens, or with `--no-browser`, it prints the address: open it in a browser on the same machine. The sign-in is renewed when it expires. Before anything starts, `run` and `upload` ask DevTune what the sign-in may do now, and stop, saying to log in again, if DevTune refuses to renew it or it lacks Agent Picks Run. If DevTune can't be reached or is briefly unavailable, they warn and carry on, and the upload checks again. If a renewal's answer is lost, so DevTune may have renewed the sign-in without `agentpicks` saving it, they stop; run `login` again. A sign-in revoked during a long `run`, or one DevTune no longer renews, is refused at upload, and the bundle stays on disk. Uploads act as the signed-in member, who needs DevTune management permission on the account and edit rights on the project.
 
+On a terminal, `agentpicks` with no command, `--help` and a successful `login` show the DevTune logo first. Set `AGENTPICKS_NO_LOGO=1` to leave it out.
+
 `agentpicks login --api-key` reads a project API key from standard input instead: paste it at the prompt, which doesn't echo it, or pipe it in. Create the key under **API Keys** in DevTune, with the **Agent Picks Run** scope. `login` asks DevTune which project the key belongs to, which needs the key's Project Read scope too; with `--project`, it saves the key for that project without asking.
 
 Either login is saved to `agentpicks/credentials.json` under `$XDG_CONFIG_HOME`, or else `%APPDATA%` on Windows and `~/.config` elsewhere, in a file with mode 0600, so only your user can read it, and replaces the other. `agentpicks` never prints a key or token.
@@ -266,7 +268,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: npm install -g @anthropic-ai/claude-code@2.1.323
-      - uses: devtunehq/agentpicks@v0.4.2
+      - uses: devtunehq/agentpicks@v0.4.3
         with:
           setup: agentpicks/error-tracking.yaml
           agent: claude-code
@@ -280,7 +282,7 @@ jobs:
 
 Use a Linux runner: `ubuntu-latest` has Docker and Node.js 20 or later. Without Docker, `run` refuses; without Node.js 20 or later, the action does. The action uses the runner's Node.js and doesn't change it for later steps.
 
-Pin a release tag, such as `v0.4.2`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
+Pin a release tag, such as `v0.4.3`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
 
 | Input | Passed as |
 |---|---|
@@ -321,7 +323,7 @@ Install Docker, Node.js 20 or later and the agent, set `DEVTUNE_API_KEY`, `DEVTU
 
 ```sh
 npm install -g @anthropic-ai/claude-code@2.1.323
-npx --yes @devtune/agentpicks@0.4.2 run error-tracking --agent claude-code
+npx --yes @devtune/agentpicks@0.4.3 run error-tracking --agent claude-code
 ```
 
 ## The bundle

@@ -61,6 +61,7 @@ export async function loginCommand(
   const path = loginPath(ctx.io);
   if (args.apiKey) {
     await apiKeyLogin(args.project, baseUrl, path, ctx);
+    await ctx.logo?.();
     ctx.out(`Saved to ${path}. run and upload send bundles to this project.`);
     if (ctx.io.env.DEVTUNE_API_KEY || ctx.io.env.DEVTUNE_PROJECT_ID)
       ctx.out(
@@ -87,6 +88,7 @@ export async function loginCommand(
         ),
       save: (session) => withLoginLock(path, () => saveLogin(path, session)),
     });
+    await ctx.logo?.();
     ctx.out(`Signed in to ${project.name} (${project.id}).`);
     ctx.out(`Granted: ${[...scopes].sort().join(', ')}.`);
     const missing = AGENTPICKS_SCOPES.filter((s) => !scopes.includes(s));

@@ -71,8 +71,12 @@ export function setupMaxTools(categorySlug: string | null) {
  */
 export const SAFE_SIGNAL_NAME = /^[A-Za-z0-9@._/:*-]+$/;
 
-/** A safe package name with a letter or digit, so a prefix (`@acme/`, `acme*`) still names something. */
-const PACKAGE_NAME = /^[A-Za-z0-9@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$/;
+/**
+ * A safe package name with a letter or digit, so a prefix (`@acme/`, `acme*`) still names something.
+ * The leading run excludes letters and digits so only one split exists and a long refused name fails
+ * in linear time.
+ */
+const PACKAGE_NAME = /^[@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$/;
 
 /** A safe config name that `grep` never reads as an option: no leading `-`. */
 const CONFIG_NAME = /^[A-Za-z0-9@._/:*][A-Za-z0-9@._/:*-]*$/;
@@ -155,7 +159,7 @@ export const packageNameSchema = z
   .string()
   .trim()
   .min(1, { message: PACKAGE_NAME_MESSAGE })
-  .max(PACKAGE_NAME_MAX_LENGTH, { message: PACKAGE_NAME_MESSAGE })
+  .max(PACKAGE_NAME_MAX_LENGTH, { message: PACKAGE_NAME_MESSAGE, abort: true })
   .regex(PACKAGE_NAME, { message: PACKAGE_NAME_MESSAGE });
 
 /** An env name or a vendor host, matched as a plain substring of the change; `reviewed` as `signalFormat`. */

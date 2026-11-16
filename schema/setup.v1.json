@@ -145,7 +145,7 @@
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 214,
-                            "pattern": "^[A-Za-z0-9@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
+                            "pattern": "^[@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
                           }
                         },
                         "pypi": {
@@ -155,7 +155,7 @@
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 214,
-                            "pattern": "^[A-Za-z0-9@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
+                            "pattern": "^[@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
                           }
                         },
                         "gem": {
@@ -165,7 +165,7 @@
                             "type": "string",
                             "minLength": 1,
                             "maxLength": 214,
-                            "pattern": "^[A-Za-z0-9@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
+                            "pattern": "^[@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
                           }
                         }
                       },
@@ -317,7 +317,7 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 214,
-                              "pattern": "^[A-Za-z0-9@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
+                              "pattern": "^[@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
                             }
                           },
                           "pypi": {
@@ -327,7 +327,7 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 214,
-                              "pattern": "^[A-Za-z0-9@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
+                              "pattern": "^[@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
                             }
                           },
                           "gem": {
@@ -337,7 +337,7 @@
                               "type": "string",
                               "minLength": 1,
                               "maxLength": 214,
-                              "pattern": "^[A-Za-z0-9@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
+                              "pattern": "^[@._/:*-]*[A-Za-z0-9][A-Za-z0-9@._/:*-]*$"
                             }
                           }
                         },

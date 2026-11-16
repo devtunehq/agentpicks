@@ -67,6 +67,7 @@ import {
 import { initCommand } from './init';
 import { listCommand } from './list-command';
 import { assertSignedIn, loginCommand } from './login-command';
+import { logoPlayer } from './logo';
 import { pullCommand } from './pull-command';
 import { pushCommand } from './push-command';
 import { describeRepository, readRepository } from './repository';
@@ -161,6 +162,17 @@ A setup file, agentpicks/error-tracking.yaml:
 Its schema is schema/setup.v1.json in this package; the README describes every field.
 `;
 
+/** What `agentpicks` on its own prints: the commands to start with, then where the rest are. */
+export const INTRO = `Test which tools coding agents pick when they build your kind of app.
+
+  agentpicks login     Sign in to your DevTune project
+  agentpicks init      Write a setup file for this repository
+  agentpicks run       Run a setup with the coding agent installed here
+  agentpicks results   Show which tool each run picked
+  agentpicks list      List this repository's setups and your project's
+
+agentpicks --help lists every command and flag.`;
+
 export interface CliContext {
   io: HostIo;
   out: (line: string) => void;
@@ -180,6 +192,8 @@ export interface CliContext {
   stdinIsTerminal: boolean;
   /** The terminal's width when standard output is one, so `list` fits it; unset when output is piped. */
   columns?: number;
+  /** Plays the DevTune mark once, for help and a login; unset where it shouldn't play (logo.ts says where). */
+  logo?: () => Promise<void>;
   /** Docker access; tests replace it. */
   docker?: {
     version(): Promise<string>;
@@ -200,6 +214,7 @@ export function defaultContext(dockerfileDir: string): CliContext {
     stdinIsTerminal: Boolean(process.stdin.isTTY),
     interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
     columns: process.stdout.isTTY ? process.stdout.columns : undefined,
+    logo: logoPlayer(process.env, process.stdout),
   };
 }
 
@@ -238,15 +253,20 @@ export async function main(argv: string[], given: CliContext): Promise<number> {
       ctx.out(RUNNER.version);
       return 0;
     }
+    if (!command) {
+      await ctx.logo?.();
+      ctx.out(INTRO);
+      return 0;
+    }
     if (
-      !command ||
       command === 'help' ||
       command === '--help' ||
       command === '-h' ||
       rest.includes('--help')
     ) {
+      await ctx.logo?.();
       ctx.out(USAGE);
-      return command ? 0 : 1;
+      return 0;
     }
     if (command === 'init')
       return await initCommand(rest, { ...ctx, ask: ctx.ask ?? askLine });

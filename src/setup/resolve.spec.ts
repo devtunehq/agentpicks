@@ -12,6 +12,7 @@ import { NEVER_PATTERN, resolveSetup, type ResolvedSetup } from './resolve';
 import {
   CONFIG_NAME_MESSAGE,
   PACKAGE_NAME_MESSAGE,
+  packageNameSchema,
   PATTERN_MESSAGE,
   SETUP_MAX_COMPETITORS,
   SETUP_MAX_TOOLS,
@@ -482,6 +483,18 @@ describe('resolveSetup', () => {
       })),
     ).toEqual([{ field, message }]);
   });
+
+  it('refuses an oversized package name on its length alone, before the format check', () => {
+    const parsed = packageNameSchema.safeParse(`${'a'.repeat(50_000)}!`);
+    expect(parsed.error?.issues.map((issue) => issue.code)).toEqual([
+      'too_big',
+    ]);
+  });
+
+  it.each(['@acme/', '-acme', 'acme*', '@scope/pkg'])(
+    'accepts the package name %s',
+    (name) => expect(packageNameSchema.safeParse(name).success).toBe(true),
+  );
 
   it('names the field and the fix for every problem', () => {
     expect(problems({ stacks: ['nextjs'], repo: '.' })).toEqual([

@@ -58,6 +58,7 @@ import {
   cancelSandboxes,
   main,
   RUNNER,
+  INTRO,
   USAGE,
   trackSandboxes,
   type CliContext,
@@ -161,6 +162,13 @@ function context(
       provider: (_image, given) => (labels.push(given), provider),
     },
   };
+}
+
+const LOGO = '<the DevTune mark>';
+
+/** The context with a logo that records where it played among the printed lines. */
+function playsLogo<T extends CliContext & { lines: string[] }>(ctx: T): T {
+  return { ...ctx, logo: async () => void ctx.lines.push(LOGO) };
 }
 
 const CLAUDE = { claude: '2.1.322 (Claude Code)' };
@@ -1178,7 +1186,7 @@ describe('agentpicks login', () => {
       ],
     });
     const ctx = {
-      ...context(host(), fakeProvider().provider, cwd),
+      ...playsLogo(context(host(), fakeProvider().provider, cwd)),
       readSecret: async () => `${TARGET.apiKey}\n`,
     };
     expect(await main(['login', '--api-key'], ctx)).toBe(0);
@@ -1190,6 +1198,7 @@ describe('agentpicks login', () => {
     expect(statSync(path()).mode & 0o777).toBe(0o600);
     expect(ctx.lines).toEqual([
       `The key belongs to Acme (${TARGET.projectId}).`,
+      LOGO,
       `Saved to ${path()}. run and upload send bundles to this project.`,
     ]);
     expect([...ctx.lines, ...ctx.errors].join('\n')).not.toContain(
@@ -1281,13 +1290,14 @@ describe('agentpicks login, in the browser', () => {
     stubFetch(signInReplies());
     const browser = consentBrowser();
     const ctx = {
-      ...context(host(), fakeProvider().provider, cwd),
+      ...playsLogo(context(host(), fakeProvider().provider, cwd)),
       openBrowser: browser.open,
     };
     expect(await main(['login'], ctx)).toBe(0);
     const { authorize } = await browser.visit;
     expect(ctx.lines).toEqual([
       `Open this address in a browser to sign in and choose your project:\n${authorize.href}`,
+      LOGO,
       `Signed in to Acme (${TARGET.projectId}).`,
       'Granted: actions.write, agent_picks.run, project.read, visibility.read.',
       `Saved to ${path()}. run and upload send bundles to this project.`,
@@ -1837,21 +1847,31 @@ describe('agentpicks', () => {
   ])(
     'prints usage and exits successfully for %s --help before doing any work',
     async (command) => {
-      const ctx = context(fakeHost(), fakeProvider().provider, cwd);
+      const ctx = playsLogo(context(fakeHost(), fakeProvider().provider, cwd));
       expect(await main([command, '--help'], ctx)).toBe(0);
-      expect(ctx.lines).toEqual([USAGE]);
+      expect(ctx.lines).toEqual([LOGO, USAGE]);
       expect(ctx.errors).toEqual([]);
     },
   );
 
-  it('prints its version, and its usage for an unknown command', async () => {
-    const ctx = context(fakeHost(), fakeProvider().provider, cwd);
+  it('plays the logo and prints the commands to start with when run on its own', async () => {
+    const ctx = playsLogo(context(fakeHost(), fakeProvider().provider, cwd));
+    expect(await main([], ctx)).toBe(0);
+    expect(ctx.lines).toEqual([LOGO, INTRO]);
+    expect(ctx.errors).toEqual([]);
+    for (const command of ['login', 'init', 'run', 'results', 'list'])
+      expect(USAGE).toContain(`agentpicks ${command}`);
+  });
+
+  it('prints its version, and its usage for an unknown command, without the logo', async () => {
+    const ctx = playsLogo(context(fakeHost(), fakeProvider().provider, cwd));
     expect(await main(['--version'], ctx)).toBe(0);
     expect(ctx.lines).toEqual([RUNNER.version]);
     expect(await main(['publish'], ctx)).toBe(1);
     expect(ctx.errors[0]).toMatch(
       /^agentpicks has no publish command\.\n\nUsage:/,
     );
+    expect(ctx.lines).toEqual([RUNNER.version]);
   });
 });
 
