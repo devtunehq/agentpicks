@@ -57,8 +57,16 @@ export const bundleSetupSchema = z.object({
   id: z.string().min(1).nullable(),
   /** The job line. */
   job: z.string().min(1),
-  /** Set when the run asked a linked file's changes not yet pushed, so it can't file under its setup. */
+  /** Set when the run asked a linked file's changes not yet pushed, so it files only once they are. */
   unpushed: z.boolean().optional(),
+  /**
+   * The digest of what the run tested (runDigest), for a run kept with --no-upload: `upload` files
+   * a custom setup's run, or one of changes not pushed, once a push has saved a file that tests this.
+   */
+  asked: z
+    .string()
+    .regex(/^[0-9a-f]{64}$/)
+    .optional(),
   /** The catalogue tools the setup names by key that the run's early stop doesn't hold. */
   unrecognised: z.array(z.string().min(1)).optional(),
 });

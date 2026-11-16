@@ -1,16 +1,26 @@
 # @devtune/agentpicks
 
-Test which tools the coding agents installed on your machine pick when they build your kind of app. `agentpicks run` gives an agent a real request (add error tracking, choose a database) in a committed starter app or your own repository, inside a fresh Docker container, writes what it did to a bundle on disk (its transcript, its code changes, every URL it fetched and every package it installed) and uploads the bundle to your DevTune project.
+Test which tools the coding agents installed on your machine pick when they build your kind of app. `agentpicks run` gives an agent a real request (add error tracking, choose a database) in a committed starter app or your own repository, inside a fresh Docker container, and writes what it did to a bundle on disk: its transcript, its code changes, every URL it fetched and every package it installed. `agentpicks results` reads which tool each run picked from those bundles.
 
-Apache-2.0.
+Apache-2.0. None of this needs a DevTune account:
+
+```sh
+npx @devtune/agentpicks init                              # writes a setup file, such as agentpicks/error-tracking.yaml
+npx @devtune/agentpicks run error-tracking --no-upload    # runs it; see Setups
+npx @devtune/agentpicks run --category error-tracking --stack nextjs --no-upload
+npx @devtune/agentpicks results
+npm install -g @devtune/agentpicks   # then: agentpicks run ...
+```
+
+To have DevTune analyse the runs (what the agent said it picked, pick rates, loss reasons and the Actions that follow), sign in, save the setup and upload what you already ran:
 
 ```sh
 npx @devtune/agentpicks login
-npx @devtune/agentpicks run --category error-tracking --stack nextjs
-npx @devtune/agentpicks init                 # writes a setup file, such as agentpicks/error-tracking.yaml
-npx @devtune/agentpicks run error-tracking   # runs agentpicks/error-tracking.yaml; see Setups
-npm install -g @devtune/agentpicks   # then: agentpicks run ...
+npx @devtune/agentpicks push
+npx @devtune/agentpicks upload ./agentpicks-runs
 ```
+
+A kept run uploads once its setup is pushed with the same `from`, add request and tools the run tested. See [Upload](#upload).
 
 ## Requirements
 
@@ -36,7 +46,7 @@ agentpicks run --category error-tracking --repo .
 | `--agent` | `claude-code`, `codex`, `opencode` or `pi`. Required when several are installed. |
 | `--model` | The model to ask for. OpenCode and Pi take `anthropic/<model>` or `openai/<model>`. |
 | `--out` | Where bundles go. Default `./agentpicks-runs`. |
-| `--no-upload` | Keep bundles on this machine only. Send them later with `agentpicks upload`, except a custom setup's (see [Setups](#setups)). |
+| `--no-upload` | Keep bundles on this machine only. Send them later with `agentpicks upload`; a custom setup's once `agentpicks push` saves it (see [Setups](#setups)). |
 
 `agentpicks --help`, or `--help` after any command, prints the usage and exits successfully.
 
@@ -219,7 +229,7 @@ agentpicks run
 
 `agentpicks run <setup>` takes the setup's name or the path of its file. Each run asks the setup's `add` request, once per agent and stack. Claude Code's early stop watches for the `from` category's tools and for the package and config names of the setup's own tools; a tool that yields to another tool in the setup (`yieldsTo`) doesn't stop it, and nor does a tool named by key alone or a full entry with no package or config name, so a setup whose tools are all like these isn't stopped early. Flags override the file: `--stack` or `--repo` replaces its stacks or repo, `--ref` its commit, `--agent` its agents, and `--runs` its runs. `--model` sets one agent's model, so a setup with several agents needs `--agent` with it. On a terminal, `agentpicks run` with no setup and no `--category` lists the setups and asks which to run.
 
-A setup file linked to a DevTune setup (it has an `id`) uploads under that setup. An unlinked setup `from` a category, with no requests or tool signals of its own, uploads as that category. Naming the category's tools under `tools` doesn't change that. Any other setup is custom, and can't share its name with a built-in category: until `agentpicks push` saves it to DevTune, `run` refuses to start it without `--no-upload`, and `upload` refuses its bundles. A run of a linked file whose DevTune setup is gone is refused before it starts, and so is a run of a linked file with changes not pushed (push it first) or whose DevTune setup changed since the file last saw it (pull it first). DevTune refuses an upload whose prompt isn't its setup's current request, as `prompt_mismatch`. With `--no-upload`, such a run's bundles record the unpushed changes, and `upload` refuses them.
+A setup file linked to a DevTune setup (it has an `id`) uploads under that setup. An unlinked setup `from` a category, with no requests or tool signals of its own, uploads as that category. Naming the category's tools under `tools` doesn't change that. Any other setup is custom, and can't share its name with a built-in category: until `agentpicks push` saves it to DevTune, `run` refuses to start it without `--no-upload`. A run of a linked file whose DevTune setup is gone is refused before it starts, and so is a run of a linked file with changes not pushed (push it first) or whose DevTune setup changed since the file last saw it (pull it first). DevTune refuses an upload whose prompt isn't its setup's current request, as `prompt_mismatch`. A `--no-upload` bundle of a custom setup, or of a linked file's changes not pushed, uploads once `agentpicks push` has saved the file with the same `from`, add request and tools the run tested: run `upload` from the repository that holds the file. Adding what `push` needs and a run doesn't, such as a `recommend` request, is fine. A bundle of an add request or tools the file or DevTune no longer holds can't file under the setup; run the setup again.
 
 ```sh
 agentpicks list
@@ -268,7 +278,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: npm install -g @anthropic-ai/claude-code@2.1.323
-      - uses: devtunehq/agentpicks@v0.4.3
+      - uses: devtunehq/agentpicks@v0.4.4
         with:
           setup: agentpicks/error-tracking.yaml
           agent: claude-code
@@ -282,7 +292,7 @@ jobs:
 
 Use a Linux runner: `ubuntu-latest` has Docker and Node.js 20 or later. Without Docker, `run` refuses; without Node.js 20 or later, the action does. The action uses the runner's Node.js and doesn't change it for later steps.
 
-Pin a release tag, such as `v0.4.3`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
+Pin a release tag, such as `v0.4.4`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
 
 | Input | Passed as |
 |---|---|
@@ -323,7 +333,7 @@ Install Docker, Node.js 20 or later and the agent, set `DEVTUNE_API_KEY`, `DEVTU
 
 ```sh
 npm install -g @anthropic-ai/claude-code@2.1.323
-npx --yes @devtune/agentpicks@0.4.3 run error-tracking --agent claude-code
+npx --yes @devtune/agentpicks@0.4.4 run error-tracking --agent claude-code
 ```
 
 ## The bundle

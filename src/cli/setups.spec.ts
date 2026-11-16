@@ -310,6 +310,8 @@ describe('agentpicks run <setup>', () => {
       from: null,
       id: null,
       job: 'Add feature flags',
+      // What the run tested, so `upload` can file it once a push saves a file that tests that.
+      asked: expect.stringMatching(/^[0-9a-f]{64}$/),
     });
     // The early stop it ran with, which `agentpicks results` reads the run's pick with.
     expect(written.earlyStop).toEqual({
@@ -506,7 +508,7 @@ describe('agentpicks run <setup>', () => {
 });
 
 describe('agentpicks upload', () => {
-  it('refuses an unlinked custom setup’s bundle by its category, with or without the setup record', async () => {
+  it('refuses an unlinked custom setup’s bundle until a push saves it, and by its category without the setup record', async () => {
     writeSetup('flags.yaml', FLAGS_SETUP);
     const run = context(CLAUDE_HOST(), fakeProvider().provider, repo);
     expect(await main(['run', 'flags', '--no-upload'], run.ctx)).toBe(0);
@@ -520,10 +522,13 @@ describe('agentpicks upload', () => {
         DEVTUNE_API_BASE_URL: TARGET.baseUrl,
       },
     });
-    const { ctx, errors } = context(io, fakeProvider().provider, repo);
-    expect(await main(['upload', dir], ctx)).toBe(1);
-    const refusal = `${dir} is a run of the custom setup flags, which isn't linked to a DevTune setup, so it can't upload. Run agentpicks push to save the setup to DevTune, then run it again.`;
-    expect(errors).toEqual([refusal]);
+    // Refused before a login is asked for, since logging in can't make it upload; pushing can.
+    const pushFirst = `${dir} (a run of flags) tested what flags holds now, which isn't saved to DevTune yet. Run agentpicks push flags, then agentpicks upload ${dir} again.`;
+    for (const host of [io, fakeHost()]) {
+      const { ctx, errors } = context(host, fakeProvider().provider, repo);
+      expect(await main(['upload', dir], ctx)).toBe(1);
+      expect(errors).toEqual([pushFirst]);
+    }
 
     // As 0.2.0 or any reader of the bundle format would hold it: the record gone, the category kept.
     const path = join(dir, 'manifest.json');
@@ -531,14 +536,12 @@ describe('agentpicks upload', () => {
       readFileSync(path, 'utf8'),
     );
     writeFileSync(path, JSON.stringify(stripped));
-    const again = context(io, fakeProvider().provider, repo);
-    expect(await main(['upload', dir], again.ctx)).toBe(1);
-    expect(again.errors).toEqual([refusal]);
-
-    // Refused before a login is asked for, since logging in can't make it upload.
-    const loggedOut = context(fakeHost(), fakeProvider().provider, repo);
-    expect(await main(['upload', dir], loggedOut.ctx)).toBe(1);
-    expect(loggedOut.errors).toEqual([refusal]);
+    const refusal = `${dir} is a run of the custom setup flags, which isn't linked to a DevTune setup, so it can't upload. Run agentpicks push to save the setup to DevTune, then run it again.`;
+    for (const host of [io, fakeHost()]) {
+      const again = context(host, fakeProvider().provider, repo);
+      expect(await main(['upload', dir], again.ctx)).toBe(1);
+      expect(again.errors).toEqual([refusal]);
+    }
   });
 });
 

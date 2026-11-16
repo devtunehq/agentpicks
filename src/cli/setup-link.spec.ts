@@ -1484,7 +1484,7 @@ describe('agentpicks run, linked to DevTune', () => {
     expect(() => readdirSync(join(repo, 'agentpicks-runs'))).toThrow();
   });
 
-  it('refuses a linked file with changes not pushed before Docker, and with --no-upload, its bundle at upload', async () => {
+  it('refuses a linked file with changes not pushed before Docker, and with --no-upload, its bundle at upload until they are pushed', async () => {
     await pulled([jobSetup()]);
     const path = setupPath('add-feature-flags');
     writeFileSync(path, readFileSync(path, 'utf8').replace('checkout', 'cart'));
@@ -1513,9 +1513,127 @@ describe('agentpicks run, linked to DevTune', () => {
     const upload = context();
     expect(await main(['upload', dir], upload.ctx)).toBe(1);
     expect(upload.errors).toEqual([
-      `${dir} (a run of add-feature-flags) ran with changes not pushed to its DevTune setup, so it can't file under it. Run agentpicks push add-feature-flags, then run the setup again.`,
+      `${dir} (a run of add-feature-flags) tested what add-feature-flags holds now, which isn't saved to DevTune yet. Run agentpicks push add-feature-flags, then agentpicks upload ${dir} again.`,
     ]);
     expect(calls).toEqual([]);
+
+    // Once a push saves what the run asked, the same bundle files under the setup.
+    const pushed = jobSetup(
+      D('c'),
+      'Add feature flags to this app, and put a new cart page behind one.',
+    );
+    stubFetch({
+      [`GET ${SETUPS}`]: [setupList([jobSetup()])],
+      [`PUT ${JOB}`]: [savedSetup(JOB_ID, 'job-add-feature-flags', D('c'))],
+    });
+    expect(await main(['push', 'add-feature-flags'], context().ctx)).toBe(0);
+    const sent = stubFetch({
+      [`GET ${SETUPS}`]: [setupList([pushed])],
+      ...uploadReplies(1),
+    });
+    const after = context();
+    expect(await main(['upload', dir], after.ctx)).toBe(0);
+    expect(after.errors).toEqual([]);
+    expect(uploadedCategory(sent)).toEqual(['job-add-feature-flags']);
+  });
+
+  it('uploads a custom setup run signed out with --no-upload once a push saves what it tested, and only that', async () => {
+    writeFileSync(
+      setupPath('add-feature-flags'),
+      `job: Add feature flags
+requests:
+  add: Add feature flags to this app, and put a new checkout page behind one.
+tools:
+  own:
+    key: acme-flags
+    name: Acme Flags
+    domain: acme.dev
+    signals:
+      packages:
+        npm: ['@acme/flags']
+      configNames: [ACME_FLAGS_KEY]
+stacks: [nextjs]
+agents: [claude-code]
+`,
+    );
+    // No DevTune account: the run and its results need no sign-in and read nothing from DevTune.
+    const offline = stubFetch({});
+    const local = context({});
+    expect(
+      await main(['run', 'add-feature-flags', '--no-upload'], local.ctx),
+      local.errors.join('\n'),
+    ).toBe(0);
+    const [id] = readdirSync(join(repo, 'agentpicks-runs'));
+    const dir = join(repo, 'agentpicks-runs', id!);
+    expect(
+      JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')).setup,
+    ).toMatchObject({
+      id: null,
+      asked: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+    expect(offline).toEqual([]);
+
+    const early = context({});
+    expect(await main(['upload', dir], early.ctx)).toBe(1);
+    expect(early.errors).toEqual([
+      `${dir} (a run of add-feature-flags) tested what add-feature-flags holds now, which isn't saved to DevTune yet. Run agentpicks push add-feature-flags, then agentpicks upload ${dir} again.`,
+    ]);
+
+    // A bundle names a setup, never a path to read, wherever it came from.
+    const manifestPath = join(dir, 'manifest.json');
+    const manifest = readFileSync(manifestPath, 'utf8');
+    const crafted = JSON.parse(manifest);
+    crafted.setup.name = '/dev/zero';
+    writeFileSync(manifestPath, JSON.stringify(crafted));
+    const elsewhere = context({});
+    expect(await main(['upload', dir], elsewhere.ctx)).toBe(1);
+    expect(elsewhere.errors).toEqual([
+      `${dir} (a run of /dev/zero) uploads under the DevTune setup its file /dev/zero is linked to, and there is no readable setup /dev/zero here. Run agentpicks upload from the repository whose agentpicks folder holds it.`,
+    ]);
+    writeFileSync(manifestPath, manifest);
+
+    // Signed up: push needs the recommend request a run doesn't, and the bundle still files under the setup it made.
+    const path = setupPath('add-feature-flags');
+    writeFileSync(
+      path,
+      readFileSync(path, 'utf8').replace(
+        'tools:',
+        '  recommend: Recommend a feature flag service for this app.\ntools:',
+      ),
+    );
+    stubFetch({
+      [`GET ${SETUPS}`]: [setupList([])],
+      [`PUT ${JOB}`]: [savedSetup(JOB_ID, 'job-add-feature-flags', D('a'))],
+    });
+    expect(await main(['push', 'add-feature-flags'], context().ctx)).toBe(0);
+    const sent = stubFetch({
+      [`GET ${SETUPS}`]: [setupList([jobSetup()])],
+      ...uploadReplies(1),
+    });
+    const upload = context();
+    expect(await main(['upload', dir], upload.ctx)).toBe(0);
+    expect(upload.errors).toEqual([]);
+    expect(uploadedCategory(sent)).toEqual(['job-add-feature-flags']);
+
+    // A run of what the file no longer tests can't file under it, pushed or not.
+    writeFileSync(path, readFileSync(path, 'utf8').replace('checkout', 'cart'));
+    const changed = stubFetch({});
+    const edited = context();
+    expect(await main(['upload', dir], edited.ctx)).toBe(1);
+    expect(edited.errors).toEqual([
+      `${dir} (a run of add-feature-flags) tested a version of add-feature-flags that the file no longer holds, so no push can save what it tested. Run agentpicks run add-feature-flags again to upload its runs.`,
+    ]);
+    expect(changed).toEqual([]);
+    stubFetch({
+      [`GET ${SETUPS}`]: [setupList([jobSetup()])],
+      [`PUT ${JOB}`]: [savedSetup(JOB_ID, 'job-add-feature-flags', D('c'))],
+    });
+    expect(await main(['push', 'add-feature-flags'], context().ctx)).toBe(0);
+    const later = context();
+    expect(await main(['upload', dir], later.ctx)).toBe(1);
+    expect(later.errors).toEqual([
+      `${dir} (a run of add-feature-flags) tested a version of add-feature-flags that DevTune doesn't hold, so it can't file under its setup. Run agentpicks run add-feature-flags again to upload its runs.`,
+    ]);
   });
 
   it("uploads an unedited linked copy's --no-upload bundle under its copy, not its category's series", async () => {

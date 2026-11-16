@@ -141,7 +141,8 @@ push      Saves a setup file, or every one, to DevTune and links it. A setup cha
 validate  Checks every setup file, or the ones named, against the setup schema and the
           catalogue. Exits non-zero if any fails, naming the file and field.
 upload    Uploads a bundle directory, or every bundle in an --out directory. Uploading again
-          sends only what isn't stored yet. An unlinked custom setup's bundles are refused.
+          sends only what isn't stored yet. A custom setup's bundle, or one of changes not
+          pushed, uploads once agentpicks push has saved the add request and tools it tested.
 results   Shows which tool each run in ./agentpicks-runs, or the directories named, picked: the
           packages it added, or the code or config file that shows the pick, read from its
           bundle as the run's early stop reads it. A run with no pick shows none, and one whose
@@ -593,7 +594,8 @@ async function uploadCommand(argv: string[], ctx: CliContext): Promise<number> {
       ctx.err(error.message);
       continue;
     }
-    // A linked setup's bundle uploads under its DevTune setup; an unlinked custom setup's names no DevTune category.
+    // A linked setup's bundle uploads under its DevTune setup; a custom setup's from before bundles recorded
+    // what their file said names no DevTune category, so it can't upload.
     const { category } = bundle.manifest.request;
     let linked: BundleOnDisk | null;
     try {

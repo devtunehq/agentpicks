@@ -6,21 +6,28 @@
  * a linked file with changes not pushed asks what DevTune doesn't hold, so it files under nothing.
  */
 import { readFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { basename, dirname, extname } from 'node:path';
 
 import { parseDocument } from 'yaml';
 
 import { findCategoryRequests } from '../catalogue/categories';
-import type { HeldTools } from '../setup/files';
+import {
+  listSetupFiles,
+  readSetupFile,
+  setupsRoot,
+  type HeldTools,
+} from '../setup/files';
 import {
   devtuneSetupFile,
   devtuneSetupNames,
   fileDigest,
   hasOwnTools,
+  runDigest,
 } from '../setup/link';
 import { resolveSetup, type ResolvedSetup } from '../setup/resolve';
 import type { SetupFile } from '../setup/schema';
 import type { RunPlan } from './args';
+import { CUSTOM_SETUP_CATEGORY_PREFIX, type BundleSetup } from './bundle';
 import { devtuneTarget, type DevtuneTarget } from './devtune-login';
 import {
   readDevtuneSetups,
@@ -204,13 +211,18 @@ export async function linkUploads(
 ): Promise<RunPlan> {
   const unpushed =
     setup.id !== null && content !== undefined && hasUnpushedChanges(content);
+  // A kept bundle records what the file said, so `upload` can file it once a push has saved exactly that.
   if (!plan.upload)
-    return unpushed && plan.setup
+    return content && plan.setup
       ? {
           ...plan,
           setup: {
             ...plan.setup,
-            record: { ...plan.setup.record, unpushed: true },
+            record: {
+              ...plan.setup.record,
+              asked: runDigest(content),
+              ...(unpushed ? { unpushed: true } : {}),
+            },
           },
         }
       : plan;
@@ -244,19 +256,27 @@ export async function linkUploads(
 /**
  * The bundle with its manifest naming its linked setup's category, for a bundle a linked setup
  * wrote with --no-upload, whatever category it recorded; null when the bundle names no DevTune
- * setup. Refuses a bundle whose run asked changes not pushed.
+ * setup. A bundle that ran a file's changes not pushed, or a custom setup not yet linked, files
+ * under the setup its file is linked to now, once a push has saved exactly what the run asked.
  */
 export async function linkedBundle(
   bundle: BundleOnDisk,
   ctx: CliContext,
 ): Promise<BundleOnDisk | null> {
-  const id = bundle.setup?.id;
+  const record = bundle.setup;
+  if (!record) return null;
+  const shown = `${bundle.dir} (a run of ${record.name})`;
+  // A setup `from` a category with nothing of its own uploads as that category, linked or not.
+  const custom = bundle.manifest.request.category.startsWith(
+    CUSTOM_SETUP_CATEGORY_PREFIX,
+  );
+  const id =
+    record.id && !record.unpushed
+      ? record.id
+      : record.unpushed || custom
+        ? pushedSince(record, bundle.dir, shown, ctx)
+        : null;
   if (!id) return null;
-  const shown = `${bundle.dir} (a run of ${bundle.setup!.name})`;
-  if (bundle.setup!.unpushed)
-    throw new UsageError(
-      `${shown} ran with changes not pushed to its DevTune setup, so it can't file under it. Run agentpicks push ${bundle.setup!.name}, then run the setup again.`,
-    );
   const slug = (await linkedSetup(id, shown, ctx)).category_slug;
   return {
     ...bundle,
@@ -265,4 +285,49 @@ export async function linkedBundle(
       request: { ...bundle.manifest.request, category: slug },
     },
   };
+}
+
+/**
+ * The DevTune setup the run's file is linked to now, when the file is pushed and tests what the run
+ * tested: the run digest it records. Null for a bundle of a setup never linked that recorded none,
+ * which `upload` refuses as custom. The bundle's setup name is only ever a name in the repository's
+ * agentpicks folder, never a path, since a bundle can come from anywhere.
+ */
+function pushedSince(
+  record: BundleSetup,
+  dir: string,
+  shown: string,
+  ctx: CliContext,
+): string | null {
+  if (!record.asked) {
+    if (!record.id) return null;
+    throw new UsageError(
+      `${shown} ran with changes not pushed to its DevTune setup, so it can't file under it. Run agentpicks push ${record.name}, then run the setup again.`,
+    );
+  }
+  const named = listSetupFiles(setupsRoot(ctx.cwd)).filter(
+    (path) => basename(path, extname(path)) === record.name,
+  );
+  const content =
+    named.length === 1 ? readSetupFile(named[0]!).content : undefined;
+  if (!content)
+    throw new UsageError(
+      `${shown} uploads under the DevTune setup its file ${record.name} is linked to, and there is no readable setup ${record.name} here. Run agentpicks upload from the repository whose agentpicks folder holds it.`,
+    );
+  const asked = runDigest(content) === record.asked;
+  const runAgain = `Run agentpicks run ${record.name} again to upload its runs.`;
+  if (content.id === undefined || hasUnpushedChanges(content)) {
+    if (!asked)
+      throw new UsageError(
+        `${shown} tested a version of ${record.name} that the file no longer holds, so no push can save what it tested. ${runAgain}`,
+      );
+    throw new UsageError(
+      `${shown} tested what ${record.name} holds now, which isn't saved to DevTune yet. Run agentpicks push ${record.name}, then agentpicks upload ${dir} again.`,
+    );
+  }
+  if (!asked || (record.id && record.id !== content.id))
+    throw new UsageError(
+      `${shown} tested a version of ${record.name} that DevTune doesn't hold, so it can't file under its setup. ${runAgain}`,
+    );
+  return content.id;
 }

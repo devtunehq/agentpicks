@@ -22,7 +22,7 @@ import { fileDigest } from './digest';
 import { resolveSetup } from './resolve';
 import { SETUP_AGENTS, setupFileSchema, type SetupFile } from './schema';
 
-export { canonical, fileDigest } from './digest';
+export { canonical, fileDigest, runDigest } from './digest';
 
 /**
  * A linked file's state against its DevTune setup: in_sync, local_changed, devtune_changed,
