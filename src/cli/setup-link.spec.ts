@@ -27,7 +27,7 @@ import { parse } from 'yaml';
 
 import { findCategoryRequests } from '../catalogue/categories';
 import type { Sandbox, SandboxProvider } from '../sandbox/provider';
-import { fileDigest } from '../setup/link';
+import { devtuneSetupNames, fileDigest } from '../setup/link';
 import { setupFileSchema } from '../setup/schema';
 import {
   completed,
@@ -592,6 +592,84 @@ describe('agentpicks list', () => {
       'mine               local    -              Error tracking     error-tracking  express  the installed one  1',
       'error-tracking     DevTune  -              Error tracking     error-tracking  nextjs   claude-code        1',
     ]);
+  });
+
+  it('names a DevTune setup from its name cut at a word to 30 characters, without a trailing word such as and', () => {
+    const named = (...names: string[]) => [
+      ...devtuneSetupNames(
+        names.map((name, i) => ({
+          ...jobSetup(),
+          id: `00000000-0000-4000-8000-00000000000${i}`,
+          name,
+          kind: 'job' as const,
+        })),
+      ).values(),
+    ];
+    expect(
+      named(
+        'Track which AI crawlers and assistants visit this site and what they read',
+        'Track which AI crawlers and bots visit',
+        'Add feature flags',
+        'Pneumonoultramicroscopicsilicovolcanoconiosis checks',
+      ),
+    ).toEqual([
+      'track-which-ai-crawlers',
+      'track-which-ai-crawlers-2',
+      'add-feature-flags',
+      'pneumonoultramicroscopicsilico',
+    ]);
+  });
+
+  it('prints a block per setup when the table is wider than the terminal, and the table when it fits or is piped', async () => {
+    const long = {
+      ...jobSetup(),
+      name: 'Track which AI crawlers and assistants visit this site and what they read',
+    };
+    writeFileSync(
+      setupPath('mine'),
+      'from: error-tracking\nstacks: [express]\n',
+    );
+    writeFileSync(setupPath('broken'), 'job: Trac\nstacks: [nextjs]\n');
+    const listed = async (columns: number | undefined) => {
+      stubFetch({ [`GET ${SETUPS}`]: [setupList([long])] });
+      const { ctx, lines } = context();
+      ctx.columns = columns;
+      expect(await main(['list'], ctx)).toBe(0);
+      return lines;
+    };
+    expect(await listed(80)).toEqual([
+      'broken',
+      '  invalid  requests.add: Give the add request, the one a run asks, or inherit it',
+      '           with from:.',
+      '',
+      'mine',
+      '  where    local',
+      '  job      Error tracking',
+      '  from     error-tracking',
+      '  tests    express',
+      '  agents   the installed one',
+      '  runs     1',
+      '',
+      'track-which-ai-crawlers',
+      '  where    DevTune',
+      '  job      Track which AI crawlers and assistants visit this site and what they',
+      '           read',
+      '  tests    nextjs',
+      '  agents   claude-code',
+      '  runs     1',
+      '',
+      '1 setup file fails its checks. agentpicks validate lists every problem.',
+    ]);
+    const table = [
+      'NAME                     WHERE    SYNC  JOB                                               FROM            TESTS    AGENTS             RUNS',
+      'broken                   invalid: requests.add: Give the add request, the one a run asks, or inherit it with from:.',
+      'mine                     local    -     Error tracking                                    error-tracking  express  the installed one  1',
+      'track-which-ai-crawlers  DevTune  -     Track which AI crawlers and assistants visit th…  -               nextjs   claude-code        1',
+      '',
+      '1 setup file fails its checks. agentpicks validate lists every problem.',
+    ];
+    expect(await listed(200)).toEqual(table);
+    expect(await listed(undefined)).toEqual(table);
   });
 
   it.each([

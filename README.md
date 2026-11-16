@@ -225,7 +225,7 @@ agentpicks validate
 agentpicks validate feature-flags agentpicks/error-tracking.yaml
 ```
 
-`agentpicks list` prints each setup's name, job, `from`, stacks or repo, agents and runs, and flags a file that fails its checks. Signed in, it also lists the project's DevTune setups, with where each setup is (`local`, `DevTune` or `both`) and, for a linked file, whether it is in sync or which side changed. `agentpicks validate` checks every setup file, or the ones named, against the schema and the catalogue: a known `from`, tool keys in DevTune's catalogue, stacks it runs in, known agents, and the limits above. With no setup named, two files with one name, such as `x.yaml` and `x.yml`, both fail; a file named by path is checked alone, as `run <path>` runs it. It prints each problem as `file: field: fix` and exits 1 if any file fails, so CI can run it.
+`agentpicks list` prints each setup's name, job, `from`, stacks or repo, agents and runs, and flags a file that fails its checks. Signed in, it also lists the project's DevTune setups, with where each setup is (`local`, `DevTune` or `both`) and, for a linked file, whether it is in sync or which side changed. When the table is wider than the terminal, it prints each setup as a block, one line per field; piped output is always the table. `agentpicks validate` checks every setup file, or the ones named, against the schema and the catalogue: a known `from`, tool keys in DevTune's catalogue, stacks it runs in, known agents, and the limits above. With no setup named, two files with one name, such as `x.yaml` and `x.yml`, both fail; a file named by path is checked alone, as `run <path>` runs it. It prints each problem as `file: field: fix` and exits 1 if any file fails, so CI can run it.
 
 ### DevTune setups
 
@@ -236,7 +236,7 @@ agentpicks push feature-flags
 agentpicks run add-feature-flags
 ```
 
-`agentpicks pull` writes each of the project's DevTune setups to `agentpicks/<name>.yaml`, or into the file already linked to it, with its `id` and `synced`; `pull <setup>` writes one. It leaves a file in sync alone, and refuses to replace a file with changes not yet pushed, or an unlinked file of that name, unless you pass `--force`. A setup's name is its `from` category for an unedited copy of one, else its job line in lowercase with dashes.
+`agentpicks pull` writes each of the project's DevTune setups to `agentpicks/<name>.yaml`, or into the file already linked to it, with its `id` and `synced`; `pull <setup>` writes one. It leaves a file in sync alone, and refuses to replace a file with changes not yet pushed, or an unlinked file of that name, unless you pass `--force`. A setup's name is its `from` category for an unedited copy of one, else its job line in lowercase with dashes, cut at a word to at most 30 characters.
 
 `agentpicks push` saves every setup file to DevTune, and `push <setup>` one. A new file becomes a new DevTune setup, and push writes its `id` and `synced` into the file. A linked file in sync sends nothing. If the DevTune setup changed since the file last saw it, push refuses with `setup_changed` and saves nothing: pull it, apply your changes again, and push. A setup `from` a category saves as the project's setup of that category, its tools by key; a setup without `from` saves as a job. To add your own tool to a category copy, add it in the DevTune app, then run `agentpicks pull`: pull writes it as a full entry, and push refuses a full entry DevTune doesn't hold as written. DevTune doesn't send the signals of its catalogue's tools, so pull writes a catalogue tool by its key, in a job as in a copy, and push sends the key for DevTune to fill in its signals. A job can name, by key, any tool of a category DevTune publishes; a copy names its category's tools, and another only once it is added to the copy in the DevTune app and pulled. What a file can't say, such as agent models and a job's building blocks, push sends as DevTune holds it. For a new file with `repo`, push detects the repository's stacks from its manifests and lockfiles and saves those to DevTune. The file keeps `repo`, so `run <setup>` still tests your repository. If no supported stack is detected, replace `repo` with `stacks` before pushing and pass `--repo` when running. A linked file with `repo` keeps the stacks DevTune already holds.
 
@@ -266,7 +266,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: npm install -g @anthropic-ai/claude-code@2.1.323
-      - uses: devtunehq/agentpicks@v0.4.1
+      - uses: devtunehq/agentpicks@v0.4.2
         with:
           setup: agentpicks/error-tracking.yaml
           agent: claude-code
@@ -280,7 +280,7 @@ jobs:
 
 Use a Linux runner: `ubuntu-latest` has Docker and Node.js 20 or later. Without Docker, `run` refuses; without Node.js 20 or later, the action does. The action uses the runner's Node.js and doesn't change it for later steps.
 
-Pin a release tag, such as `v0.4.1`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
+Pin a release tag, such as `v0.4.2`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
 
 | Input | Passed as |
 |---|---|
@@ -321,7 +321,7 @@ Install Docker, Node.js 20 or later and the agent, set `DEVTUNE_API_KEY`, `DEVTU
 
 ```sh
 npm install -g @anthropic-ai/claude-code@2.1.323
-npx --yes @devtune/agentpicks@0.4.1 run error-tracking --agent claude-code
+npx --yes @devtune/agentpicks@0.4.2 run error-tracking --agent claude-code
 ```
 
 ## The bundle

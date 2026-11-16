@@ -178,6 +178,8 @@ export interface CliContext {
   openBrowser?: (url: string) => Promise<void>;
   /** Whether standard input is a terminal; a key piped to `login` needs --api-key. */
   stdinIsTerminal: boolean;
+  /** The terminal's width when standard output is one, so `list` fits it; unset when output is piped. */
+  columns?: number;
   /** Docker access; tests replace it. */
   docker?: {
     version(): Promise<string>;
@@ -197,6 +199,7 @@ export function defaultContext(dockerfileDir: string): CliContext {
     dockerfileDir,
     stdinIsTerminal: Boolean(process.stdin.isTTY),
     interactive: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+    columns: process.stdout.isTTY ? process.stdout.columns : undefined,
   };
 }
 

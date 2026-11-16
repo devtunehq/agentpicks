@@ -76,17 +76,41 @@ export function nameableStack(slug: string, runsIn: string) {
   );
 }
 
-/** A file name from a job line: lowercase letters and digits joined by hyphens. */
+/** The longest name a DevTune setup's name gives it, short enough to type and to fit `list`'s table. */
+const NAME_LENGTH = 30;
+
+/** Words a shortened name doesn't end on. */
+const TRAILING_WORDS = new Set([
+  'a',
+  'an',
+  'and',
+  'for',
+  'in',
+  'of',
+  'on',
+  'or',
+  'the',
+  'to',
+  'with',
+]);
+
+/**
+ * A file name from a setup's name: lowercase letters and digits joined by hyphens, cut at a hyphen to
+ * at most 30 characters, without a trailing word such as "and".
+ */
 function slugName(text: string) {
-  return (
-    text
-      .normalize('NFKD')
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 60)
-      .replace(/-+$/, '') || 'setup'
-  );
+  const words = text
+    .normalize('NFKD')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+  const kept: string[] = [];
+  for (const word of words) {
+    if ([...kept, word].join('-').length > NAME_LENGTH) break;
+    kept.push(word);
+  }
+  while (kept.length > 1 && TRAILING_WORDS.has(kept.at(-1)!)) kept.pop();
+  return kept.join('-') || words[0]?.slice(0, NAME_LENGTH) || 'setup';
 }
 
 /**
