@@ -41,7 +41,7 @@ import {
   TARGET,
   UPLOADS,
 } from './fake-devtune';
-import { fakeHost } from './fake-host';
+import { fakeHost, fakeImageDocker } from './fake-host';
 import { main, type CliContext } from './main';
 import { SCHEMA_LINE } from './setup-write';
 
@@ -229,8 +229,7 @@ function context(env: Record<string, string> = SIGNED_IN) {
     docker: {
       version: async () => '29.9.2',
       platform: async () => 'linux/amd64',
-      run: async () => ({ exitCode: 0, stdout: 'sha256:image\n', stderr: '' }),
-      build: async () => 0,
+      ...fakeImageDocker('linux/amd64'),
       provider: () => fakeProvider(),
     },
   };

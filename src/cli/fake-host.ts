@@ -1,6 +1,7 @@
 /**
  * ABOUTME: A machine for CLI tests: the files, commands on PATH (with their `--version` output),
- * environment and platform a test gives it, at a fixed clock.
+ * environment and platform a test gives it, at a fixed clock; and a Docker whose image build lands
+ * the sandbox image in it.
  */
 import type { HostIo } from './host';
 
@@ -29,5 +30,29 @@ export function fakeHost({
     version: (path) => commands[path.split('/').at(-1)!] ?? null,
     readFile: (path) => files[path] ?? null,
     now: () => FAKE_NOW,
+  };
+}
+
+/**
+ * `docker` and `docker build` for CLI tests: every command succeeds, and `image inspect` finds the
+ * sandbox image for `platform` once a build has run, as it does on a machine whose builds load into
+ * its own Docker. `record` sees each command.
+ */
+export function fakeImageDocker(
+  platform: string,
+  record: (args: string[]) => void = () => {},
+) {
+  let built = false;
+  return {
+    run: async (args: string[]) => {
+      record(args);
+      const found = built && args[0] === 'image' && args[1] === 'inspect';
+      return {
+        exitCode: 0,
+        stdout: found ? `${platform}\n` : 'sha256:image\n',
+        stderr: '',
+      };
+    },
+    build: async () => ((built = true), 0),
   };
 }

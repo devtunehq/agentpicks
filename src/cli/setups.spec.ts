@@ -31,7 +31,7 @@ import {
   type RunPlan,
 } from './args';
 import { TARGET } from './fake-devtune';
-import { fakeHost } from './fake-host';
+import { fakeHost, fakeImageDocker } from './fake-host';
 import type { HostIo } from './host';
 import { main, type CliContext } from './main';
 
@@ -114,8 +114,7 @@ function context(
         dockerCalls.push('platform'),
         'linux/amd64'
       ),
-      run: async () => ({ exitCode: 0, stdout: 'sha256:image\n', stderr: '' }),
-      build: async () => 0,
+      ...fakeImageDocker('linux/amd64'),
       provider: () => provider,
     },
     ...extra,

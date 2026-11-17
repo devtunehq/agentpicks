@@ -2,7 +2,8 @@
  * ABOUTME: The sandbox image a self-run starts from: built for the Docker host's platform from the
  * Dockerfile shipped in the package when this version's tag is missing or was built for
  * another platform, labelled `dev.devtune.agentpicks` so the runner can
- * find its own, with older tags removed after a build. `cleanupDocker` removes every labelled
+ * find its own, with older tags removed after a build. A build whose tag doesn't land in this
+ * machine's Docker (a remote builder such as Depot kept it) is refused. `cleanupDocker` removes every labelled
  * container and image. Also states what a run needs from Docker, from the provider's limits.
  */
 import { spawn } from 'node:child_process';
@@ -39,7 +40,8 @@ export function runRequirements(): string {
 /**
  * The sandbox image for this runner version and `platform`: reused when its tag exists for that
  * platform, otherwise built for it from `dockerfileDir` (replacing a tag built for another
- * platform), after which every older labelled image is removed.
+ * platform), after which every older labelled image is removed. A build that leaves no such tag
+ * in this machine's Docker, because a remote builder kept it, is refused.
  */
 export async function ensureSandboxImage({
   version,
@@ -55,15 +57,17 @@ export async function ensureSandboxImage({
   build?: DockerBuild;
 }): Promise<{ tag: string; built: boolean; removed: string[] }> {
   const tag = sandboxImageTag(version);
-  const inspect = await run([
-    'image',
-    'inspect',
-    '--format',
-    '{{.Os}}/{{.Architecture}}',
-    tag,
-  ]);
-  if (inspect.exitCode === 0 && inspect.stdout.trim() === platform)
-    return { tag, built: false, removed: [] };
+  const present = async () => {
+    const inspect = await run([
+      'image',
+      'inspect',
+      '--format',
+      '{{.Os}}/{{.Architecture}}',
+      tag,
+    ]);
+    return inspect.exitCode === 0 && inspect.stdout.trim() === platform;
+  };
+  if (await present()) return { tag, built: false, removed: [] };
   const code = await build([
     'build',
     '--platform',
@@ -79,6 +83,10 @@ export async function ensureSandboxImage({
   if (code !== 0)
     throw new Error(
       `Building the sandbox image ${tag} failed (docker build exit ${code}); Docker's output is above.`,
+    );
+  if (!(await present()))
+    throw new Error(
+      `docker build finished, but this machine's Docker has no ${tag} for ${platform}, so no run can start. The build went to a builder that keeps its images elsewhere, such as Depot after depot configure-docker. Run depot configure-docker --uninstall, or docker buildx use default, then run agentpicks again.`,
     );
   return { tag, built: true, removed: await removeOlderImages(tag, run) };
 }
@@ -143,13 +151,17 @@ async function removeContainers(
   return containers;
 }
 
+/**
+ * Every labelled image Docker lists, intermediate images left out: the legacy builder writes each
+ * label as a build step, so its intermediate images carry the label too and are parents of the
+ * image, which Docker refuses to remove. Removing an image removes its untagged parents with it.
+ */
 async function labelledImages(
   run: DockerRun,
 ): Promise<{ id: string; ref: string }[]> {
   const r = await run([
     'image',
     'ls',
-    '--all',
     '--no-trunc',
     '--filter',
     `label=${DOCKER_SANDBOX_LABEL}`,

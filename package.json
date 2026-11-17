@@ -1,6 +1,6 @@
 {
   "name": "@devtune/agentpicks",
-  "version": "0.4.7",
+  "version": "0.4.8",
   "description": "The open Agent Picks runner: the agentpicks CLI, which tests the coding agents installed on your machine in fresh Docker containers, and the sandbox code DevTune runs its managed tests on",
   "license": "Apache-2.0",
   "engines": {

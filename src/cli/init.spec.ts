@@ -379,7 +379,7 @@ describe('the wizard', () => {
       'Your tool: its number, or none [none]: ',
       'Competitors: their numbers or ranges separated by commas (2, 5-8), or all [all]: ',
       'Competitors: their numbers or ranges separated by commas (2, 5-8), or all [all]: ',
-      "Test in this repository's committed files (.), or in stacks: their numbers or ranges separated by commas (1, 3-4) [.]: ",
+      'Where to test: this repository (repo), all stacks (all), or stack numbers or ranges separated by commas (1, 3-4) [repo]: ',
       'Agents separated by commas, or any [claude-code]: ',
       'Runs per agent and stack [1]: ',
       'Setup name, saved as agentpicks/<name>.yaml [payments]: ',
@@ -799,6 +799,82 @@ describe('drafting through DevTune', () => {
   );
 });
 
+describe('where to test', () => {
+  it.each([
+    {
+      answer: 'all',
+      written: { stacks: setupEnvironments('payments').map((env) => env.slug) },
+    },
+    { answer: 'repo', written: { repo: '.' } },
+    { answer: '.', written: { repo: '.' } },
+  ])(
+    'writes $answer typed at the where-to-test question',
+    async ({ answer, written }) => {
+      nextApp();
+      const { ctx, errors } = context(MACHINE(), [
+        '2',
+        'none',
+        '',
+        answer,
+        '',
+        '',
+        'checkout',
+      ]);
+      expect(await main(['init'], ctx), errors.join('\n')).toBe(0);
+      expect(errors).toEqual([]);
+      const file = setup('checkout');
+      expect(file).toMatchObject(written);
+      expect('repo' in written ? file.stacks : file.repo).toBeUndefined();
+      await validates('checkout');
+    },
+  );
+
+  it('writes every stack the category runs in for --stack all, with or without the job given', async () => {
+    const stacks = setupEnvironments('payments').map((env) => env.slug);
+    nextApp();
+    const given = context(MACHINE(), null);
+    const argv = [
+      'init',
+      '--category',
+      'payments',
+      '--stack',
+      'all',
+      '--name',
+      'checkout',
+      '--yes',
+    ];
+    expect(await main(argv, given.ctx), given.errors.join('\n')).toBe(0);
+    expect(setup('checkout').stacks).toEqual(stacks);
+    const detected = context(MACHINE(), null);
+    expect(
+      await main(
+        ['init', '--stack', 'all', '--name', 'detected', '--yes'],
+        detected.ctx,
+      ),
+      detected.errors.join('\n'),
+    ).toBe(0);
+    expect(setup('detected').stacks).toEqual(
+      setupEnvironments(setup('detected').from!).map((env) => env.slug),
+    );
+  });
+
+  it('refuses all with other stacks, and repo as a --stack value', async () => {
+    nextApp();
+    for (const value of ['all,nextjs', 'repo']) {
+      const { ctx, errors } = context(MACHINE(), null);
+      expect(
+        await main(
+          ['init', '--category', 'payments', '--stack', value, '--yes'],
+          ctx,
+        ),
+      ).toBe(1);
+      expect(errors.join('\n')).toContain(
+        "isn't a stack for payments. Give stack slugs, or all.",
+      );
+    }
+  });
+});
+
 describe('agentpicks init flags', () => {
   const PAYMENTS = [
     '--category',
@@ -913,7 +989,7 @@ describe('agentpicks init flags', () => {
       ),
     ).toBe(1);
     expect(noTest.errors[0]).toMatch(
-      /^agentpicks init can't ask "Test in this repository's committed files \(\.\), or in stacks: .*" without a terminal, and found nothing to test in: .* Run it in a git repository, or on a terminal to choose stacks\. Or pass --stack\.$/,
+      /^agentpicks init can't ask "Where to test: this repository \(repo\), all stacks \(all\), or stack .*" without a terminal, and found nothing to test in: .* Run it in a git repository, or on a terminal to choose stacks\. Or pass --stack\.$/,
     );
   });
 
@@ -1004,7 +1080,7 @@ describe('agentpicks init flags', () => {
         ...PAYMENTS.slice(10),
       ],
       error:
-        "--stack: svelte isn't a stack for payments. Give stack slugs. List the keys with: agentpicks catalogue payments",
+        "--stack: svelte isn't a stack for payments. Give stack slugs, or all. List the keys with: agentpicks catalogue payments",
     },
     {
       why: 'an unknown agent',
@@ -1108,12 +1184,12 @@ describe('agentpicks init flags', () => {
     {
       argv: ['--category', 'payments', '--stack', 'svelte'],
       error:
-        "--stack: svelte isn't a stack for payments. Give stack slugs. List the keys with: agentpicks catalogue payments",
+        "--stack: svelte isn't a stack for payments. Give stack slugs, or all. List the keys with: agentpicks catalogue payments",
     },
     {
       argv: ['--job', 'Add payments', '--stack', 'svelte'],
       error:
-        "--stack: svelte isn't a stack for your own job. Give stack slugs. List the keys with: agentpicks catalogue",
+        "--stack: svelte isn't a stack for your own job. Give stack slugs, or all. List the keys with: agentpicks catalogue",
     },
     { argv: ['--agent', 'cursor'], error: expect.stringMatching(/^--agent: /) },
     {
@@ -1134,7 +1210,7 @@ describe('agentpicks init flags', () => {
     {
       argv: ['--stack', 'svelte'],
       error:
-        "--stack: svelte isn't a stack. Give stack slugs. List the keys with: agentpicks catalogue",
+        "--stack: svelte isn't a stack. Give stack slugs, or all. List the keys with: agentpicks catalogue",
     },
     {
       argv: ['--tool', '3'],
@@ -1265,7 +1341,7 @@ describe('agentpicks init flags', () => {
     expect(questions.map((question) => question.split(':')[0])).toEqual([
       'Your tool',
       'Competitors',
-      "Test in this repository's committed files (.), or in stacks",
+      'Where to test',
       'Agents separated by commas, or any [claude-code]',
       'Runs per agent and stack [1]',
       'Setup name, saved as agentpicks/<name>.yaml [payments]',
@@ -1436,7 +1512,7 @@ describe('ranges in typed answers', () => {
       ),
       ...['4-2', '0-3', '1-99'].map(
         (entry) =>
-          `${entry} isn't a stack for payments. Give . or numbers from 1 to ${stacks.length}.`,
+          `${entry} isn't a stack for payments. Give repo, all, or numbers from 1 to ${stacks.length}.`,
       ),
     ]);
     expect(setup('checkout')).toMatchObject({

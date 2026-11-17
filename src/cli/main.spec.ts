@@ -43,7 +43,7 @@ import {
   TARGET,
   UPLOADS,
 } from './fake-devtune';
-import { FAKE_HOME, fakeHost } from './fake-host';
+import { FAKE_HOME, fakeHost, fakeImageDocker } from './fake-host';
 import {
   CONNECTION,
   connection as signedInConnection,
@@ -155,11 +155,7 @@ function context(
     docker: {
       version: async () => (dockerCalls.push('version'), '29.9.2'),
       platform: async () => (dockerCalls.push('platform'), platform),
-      run: async (args) => {
-        dockerCalls.push(args.join(' '));
-        return { exitCode: 0, stdout: 'sha256:image\n', stderr: '' };
-      },
-      build: async () => 0,
+      ...fakeImageDocker(platform, (args) => dockerCalls.push(args.join(' '))),
       provider: (_image, given) => (labels.push(given), provider),
     },
   };

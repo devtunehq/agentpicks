@@ -101,7 +101,7 @@ export const RUNNER = {
 
 export const USAGE = `Usage:
   agentpicks init [--yes] [--force] [--category <category> | --job <line>] [--tool <tool>|none]
-                  [--competitors <tool>,...|all] [--repo . | --stack <stack>...]
+                  [--competitors <tool>,...|all] [--repo . | --stack <stack>...|all]
                   [--agent <agent>...|any] [--runs <n>] [--name <name>]
   agentpicks catalogue [<category>] [--json]
   agentpicks run [<setup>] [--stack <stack> | --repo <path> [--ref <commit>]]
@@ -127,7 +127,8 @@ init      Writes a setup file, agentpicks/<name>.yaml, from questions whose defa
           of the same name. Signed in, DevTune drafts the requests and tools of your own job.
           Each flag answers one question: --category or --job, --tool, --competitors,
           --repo . or --stack, --agent, --runs and --name. Flags take keys, never list numbers;
-          --stack and --agent repeat or take a comma list. A question a flag answers isn't
+          --stack and --agent repeat or take a comma list, and --stack all takes every stack
+          the job runs in. A question a flag answers isn't
           asked. A flag value that doesn't read stops init before it asks anything, unless the
           check needs an earlier answer, such as --competitors against the tool this
           repository names, which waits for that question. Off a terminal, a question no flag

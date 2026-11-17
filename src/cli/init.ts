@@ -273,11 +273,13 @@ function checkFlags(wizard: Wizard) {
     const given = stack.join(',');
     refuseListNumbers('--stack', given, 'agentpicks catalogue');
     const unknown = entries(given).find(
-      (slug) => !findEnvironment(slug) || isRetiredEnvironment(slug),
+      (slug) =>
+        slug !== 'all' &&
+        (!findEnvironment(slug) || isRetiredEnvironment(slug)),
     );
     if (unknown !== undefined)
       throw new UsageError(
-        `--stack: ${unknown} isn't a stack. Give stack slugs. List the keys with: agentpicks catalogue`,
+        `--stack: ${unknown} isn't a stack. Give stack slugs, or all. List the keys with: agentpicks catalogue`,
       );
   }
   read(agentsQuestion(wizard));
@@ -465,7 +467,11 @@ function toolDefault(wizard: Wizard, category: string): string {
     : 'none';
 }
 
-/** Where a run tests: the repository (`repo: .`) in a git repository, else the stacks detected. */
+/**
+ * Where a run tests: the repository (`repo: .`, answered `repo` or `.`), every stack the job runs in
+ * (`all`), or stacks by number, range or slug. The default is the repository in a git repository,
+ * else the stacks detected.
+ */
 async function askTests(
   wizard: Wizard,
   from: string | undefined,
@@ -492,8 +498,8 @@ function testsQuestion(
   const { repo, stack } = wizard.flags;
   return {
     label:
-      "Test in this repository's committed files (.), or in stacks: their numbers or ranges separated by commas (1, 3-4)",
-    fallback: git ? '.' : detected.join(', ') || null,
+      'Where to test: this repository (repo), all stacks (all), or stack numbers or ranges separated by commas (1, 3-4)',
+    fallback: git ? 'repo' : detected.join(', ') || null,
     missing: `found nothing to test in: ${root} isn't a git repository, and its package.json and lockfiles name no framework of a stack (${choices.join(', ')}). Run it in a git repository, or on a terminal to choose stacks.`,
     flag:
       repo !== undefined
@@ -507,7 +513,9 @@ function testsQuestion(
         ? `agentpicks catalogue${from ? ` ${from}` : ''}`
         : undefined,
     read: (answer, flag): Answer<Pick<SetupFile, 'repo' | 'stacks'>> => {
-      if (answer === '.') return { value: { repo: '.' } };
+      if (answer === '.' || (!flag && answer === 'repo'))
+        return { value: { repo: '.' } };
+      if (answer === 'all') return { value: { stacks: choices } };
       const given = withRanges(answer, choices.length);
       const chosen = [
         ...new Set(given.map((entry) => pickKey(entry, choices))),
@@ -515,7 +523,7 @@ function testsQuestion(
       const unknown = given.find((entry) => !pickKey(entry, choices));
       if (given.length === 0 || unknown)
         return {
-          problem: `${unknown ?? 'Nothing'} isn't a stack ${from ? `for ${from}` : 'for your own job'}. Give ${flag ? 'stack slugs' : `. or numbers from 1 to ${choices.length}`}.`,
+          problem: `${unknown ?? 'Nothing'} isn't a stack ${from ? `for ${from}` : 'for your own job'}. Give ${flag ? 'stack slugs, or all' : `repo, all, or numbers from 1 to ${choices.length}`}.`,
         };
       return { value: { stacks: chosen.filter((stack) => stack !== null) } };
     },

@@ -16,13 +16,17 @@ import {
 
 const OK = { exitCode: 0, stdout: '', stderr: '' };
 
+type Reply = Partial<DockerResult> | (() => Partial<DockerResult>);
+
 /** A docker that answers by the first argument it matches, recording every call. */
-function fakeDocker(answers: [string, Partial<DockerResult>][]) {
+function fakeDocker(answers: [string, Reply][]) {
   const calls: string[][] = [];
   const run: DockerRun = async (args) => {
     calls.push(args);
-    const answer = answers.find(([match]) => args.join(' ').startsWith(match));
-    return { ...OK, ...answer?.[1] };
+    const reply = answers.find(([match]) =>
+      args.join(' ').startsWith(match),
+    )?.[1];
+    return { ...OK, ...(typeof reply === 'function' ? reply() : reply) };
   };
   return { run, calls };
 }
@@ -62,8 +66,12 @@ describe('ensureSandboxImage', () => {
   });
 
   it('rebuilds the tag for the host’s platform when it was built for another, then removes the old build', async () => {
+    let built = false;
     const docker = fakeDocker([
-      ['image inspect', { stdout: 'linux/amd64\n' }],
+      [
+        'image inspect',
+        () => ({ stdout: built ? 'linux/arm64\n' : 'linux/amd64\n' }),
+      ],
       [
         'image ls',
         {
@@ -78,7 +86,7 @@ describe('ensureSandboxImage', () => {
       platform: 'linux/arm64',
       dockerfileDir: '/pkg/docker',
       run: docker.run,
-      build: async (args) => (builds.push(args), 0),
+      build: async (args) => (builds.push(args), (built = true), 0),
     });
     expect(builds).toEqual([
       [
@@ -102,8 +110,15 @@ describe('ensureSandboxImage', () => {
   });
 
   it('builds a missing tag with the label, then removes every older labelled image', async () => {
+    let built = false;
     const docker = fakeDocker([
-      ['image inspect', { exitCode: 1, stderr: 'No such image' }],
+      [
+        'image inspect',
+        () =>
+          built
+            ? { stdout: 'linux/amd64\n' }
+            : { exitCode: 1, stderr: 'No such image' },
+      ],
       ['image ls', { stdout: IMAGES }],
     ]);
     const builds: string[][] = [];
@@ -112,7 +127,7 @@ describe('ensureSandboxImage', () => {
       platform: 'linux/amd64',
       dockerfileDir: '/pkg/docker',
       run: docker.run,
-      build: async (args) => (builds.push(args), 0),
+      build: async (args) => (builds.push(args), (built = true), 0),
     });
     expect(builds).toEqual([
       [
@@ -143,6 +158,29 @@ describe('ensureSandboxImage', () => {
     expect(docker.calls.find((c) => c[1] === 'ls')).toContain(
       'label=dev.devtune.agentpicks',
     );
+    // The legacy builder's intermediate images carry the label and parent the new image.
+    expect(docker.calls.find((c) => c[1] === 'ls')).not.toContain('--all');
+  });
+
+  it('refuses a build that leaves no tag in this Docker, as a remote builder does, removing nothing', async () => {
+    const docker = fakeDocker([
+      ['image inspect', { exitCode: 1, stderr: 'No such image' }],
+    ]);
+    await expect(
+      ensureSandboxImage({
+        version: '0.2.0',
+        platform: 'linux/amd64',
+        dockerfileDir: '/pkg/docker',
+        run: docker.run,
+        build: async () => 0,
+      }),
+    ).rejects.toThrow(
+      "docker build finished, but this machine's Docker has no agentpicks-sandbox:0.2.0 for linux/amd64, so no run can start. The build went to a builder that keeps its images elsewhere, such as Depot after depot configure-docker. Run depot configure-docker --uninstall, or docker buildx use default, then run agentpicks again.",
+    );
+    expect(docker.calls.map((call) => call.slice(0, 2).join(' '))).toEqual([
+      'image inspect',
+      'image inspect',
+    ]);
   });
 
   it('fails, naming the tag, when the build fails', async () => {
