@@ -3,7 +3,7 @@
  * inherits a built-in category's job, requests and early stop; a tool key must be a tool of DevTune's
  * catalogue (one this version knows, or one the linked DevTune setup holds without signals), whose
  * signals DevTune holds, so a run here recognises it only through its `from` category's early stop,
- * and a copy names one its category doesn't measure only once the copy holds it; full tool entries
+ * and a copy can add catalogue tools its category doesn't measure; full tool entries
  * add their package and config names to the early stop, as a job's tools do in a managed run, and an
  * entry with none adds nothing; stacks must run in the category, or in any job without one. A setup
  * that is its category as published (no requests or tools of its own) uploads as that category; any
@@ -93,9 +93,8 @@ export const NEVER_PATTERN = '__no-pick__';
 
 /**
  * `held` is what the file's linked DevTune setup holds, when DevTune was read: a key DevTune sent
- * without signals is a catalogue tool even if this version doesn't know it, and a copy may name a
- * catalogue tool its category doesn't measure only if the copy holds it. Unread (undefined), a
- * linked copy's catalogue keys are left for push to check against DevTune.
+ * without signals is a catalogue tool even if this version doesn't know it. A category file may
+ * also name any catalogue tool this version knows; push saves it to the category's copy.
  */
 export function resolveSetup(
   name: string,
@@ -149,12 +148,10 @@ export function resolveSetup(
     }
     const row = held?.find((each) => each.tool_key === ref);
     if (file.from) {
-      // A copy measures another catalogue tool only once it is added in the DevTune app.
-      const unchecked = !held && file.id && CATALOGUE_TOOL_KEYS.has(ref);
-      if (!catalogueKeys.includes(ref) && !row && !unchecked)
+      if (!catalogueKeys.includes(ref) && !row && !CATALOGUE_TOOL_KEYS.has(ref))
         problems.push({
           field,
-          message: `${file.from} has no tool ${ref}. Use one of ${catalogueKeys.join(', ')}, or add ${ref} to a category copy in the DevTune app, then run agentpicks pull.`,
+          message: `${file.from} has no tool ${ref}. Give the full entry: key, name and signals, and optionally domain; or, for a tool DevTune's catalogue has added since, update agentpicks.`,
         });
     } else if (!CATALOGUE_TOOL_KEYS.has(ref) && row?.signals !== null)
       problems.push({

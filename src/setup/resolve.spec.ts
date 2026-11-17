@@ -530,7 +530,7 @@ describe('resolveSetup', () => {
       {
         field: 'tools.own',
         message: expect.stringMatching(
-          /^error-tracking has no tool nobody-errors\. Use one of sentry, .*, or add nobody-errors to a category copy in the DevTune app, then run agentpicks pull\.$/,
+          /^error-tracking has no tool nobody-errors\. Give the full entry:/,
         ),
       },
       {
@@ -570,8 +570,7 @@ describe('resolveSetup', () => {
     });
     expect('setup' in job && job.setup.unrecognised).toEqual(['posthog']);
 
-    // A copy recognises its category's tools by its early stop, and is custom once it measures another, which
-    // only a copy that holds it can: one added in the DevTune app.
+    // A copy recognises its category's tools by its early stop and is custom once it measures another catalogue tool.
     const copyFile = {
       id: '11111111-1111-4111-8111-111111111111',
       from: 'error-tracking',
@@ -584,21 +583,9 @@ describe('resolveSetup', () => {
       unrecognised: ['clerk'],
       customReason: "it measures clerk, which error-tracking doesn't",
     });
-    expect(resolveSetup('my-errors', copyFile, [])).toEqual({
-      problems: [
-        {
-          field: 'tools.competitors[0]',
-          message: expect.stringMatching(
-            /^error-tracking has no tool clerk\. Use one of .*, or add clerk to a category copy in the DevTune app, then run agentpicks pull\.$/,
-          ),
-        },
-      ],
-    });
-    // Unlinked, there is no copy to hold it; linked but DevTune unread, push checks it.
+    expect(resolveSetup('my-errors', copyFile, [])).toHaveProperty('setup');
     const { id: _id, ...unlinked } = copyFile;
-    expect(resolveSetup('my-errors', unlinked)).toHaveProperty('problems', [
-      expect.objectContaining({ field: 'tools.competitors[0]' }),
-    ]);
+    expect(resolveSetup('my-errors', unlinked)).toHaveProperty('setup');
     expect(resolveSetup('my-errors', copyFile)).toHaveProperty('setup');
     const unedited = resolveSetup('error-tracking', {
       from: 'error-tracking',

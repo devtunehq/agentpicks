@@ -1,12 +1,13 @@
 /**
- * ABOUTME: What `agentpicks push` sends for a setup file: a file `from` a category saves through PUT
- * agent-picks/setup, its tools by key, and a job through PUT agent-picks/job. Each carries the digest
- * of the setup the file last saw (null for a new setup), so DevTune refuses a setup changed since
- * as setup_changed. What a file can't say (models, building blocks, a tool neither yours nor a
- * competitor, a stack or agent this version can't name) is sent as DevTune holds it. A tool from
- * DevTune's catalogue goes by key alone, and a job save fills in its signals. A copy's tool beyond
- * its category's is added in the DevTune app, so a `from` file's full entry must be one DevTune
- * already holds as it says, and a key one its category measures or the copy holds.
+ * ABOUTME: What `agentpicks push` sends for a setup file: a category file saves through the setup
+ * route until it adds a tool or edits its signals, when the job route saves its category copy with the
+ * inherited requests and tools. A job also uses the job route. Each carries the digest the file
+ * last saw (null for a new setup), so DevTune refuses concurrent changes as setup_changed. Models
+ * stay as DevTune holds them; a copy keeps every tool it holds, and a job drops one its file stops
+ * selecting. Copies omit building blocks to keep their inherited
+ * or saved recognition; blank jobs send the blocks DevTune lists. Catalogue tools go by key and
+ * the job save fills in their signals; customer-authored tools carry their full entries. A file
+ * linked to a public-category setup must use a project copy before adding tools.
  */
 import { findCategoryRequests } from '../catalogue/categories';
 import { CATEGORY_TOOLS } from '../catalogue/category-tools.generated';
@@ -17,7 +18,7 @@ import {
   fileTool,
   nameableStack,
 } from '../setup/link';
-import { SETUP_MAX_COMPETITORS } from '../setup/rules';
+import { CATALOGUE_TOOL_KEYS, SETUP_MAX_COMPETITORS } from '../setup/rules';
 import type { SetupFile, SetupToolEntry, SetupToolRef } from '../setup/schema';
 import type { DevtuneSetup, DevtuneSetupList } from './devtune-setups';
 import { UsageError } from './errors';
@@ -74,17 +75,38 @@ export function pushRequest(
     ...(current ? { setup: current.id } : {}),
   };
   if (from) {
-    // A copy's tool beyond its category's is added in the DevTune app, and the copy then holds it.
-    for (const ref of tools)
+    const named = [
+      ...(file.tools?.own !== undefined
+        ? [{ ref: file.tools.own, field: 'tools.own' }]
+        : []),
+      ...(file.tools?.competitors ?? []).map((ref, index) => ({
+        ref,
+        field: `tools.competitors[${index}]`,
+      })),
+    ];
+    for (const { ref, field } of named)
       if (
-        typeof ref === 'string'
-          ? !CATEGORY_TOOLS[from.slug]?.includes(ref) &&
-            !current?.tools.some((row) => row.tool_key === ref)
-          : !heldAsWritten(ref, current)
+        typeof ref !== 'string' &&
+        CATALOGUE_TOOL_KEYS.has(ref.key) &&
+        !heldAsWritten(ref, current)
       )
         throw new UsageError(
-          `${shown}: ${key(ref)} isn't a tool of ${from.slug}. Add it to a category copy in the DevTune app, then run agentpicks pull.`,
+          `${shown}: ${field}: ${ref.key} is a catalogue tool. Use the key alone (${ref.key}), so pull and push keep the same tool.`,
         );
+  }
+  const writesCopy =
+    from &&
+    tools.some((ref) =>
+      typeof ref === 'string'
+        ? !CATEGORY_TOOLS[from.slug]?.includes(ref) &&
+          !current?.tools.some((row) => row.tool_key === ref)
+        : !heldAsWritten(ref, current),
+    );
+  if (writesCopy && current?.kind === 'category')
+    throw new UsageError(
+      `${shown}: this file is linked to a public-category setup, which can't add tools through push. Create a category copy in the DevTune app, pull that copy, then add your tools to its file and push again.`,
+    );
+  if (from && !writesCopy) {
     return {
       route: 'setup',
       body: {
@@ -96,11 +118,14 @@ export function pushRequest(
       },
     };
   }
-  if (file.requests?.improve != null)
+  if (!from && file.requests?.improve != null)
     throw new UsageError(
       `${shown}: requests.improve can't be saved on a job. Remove it, and change it in DevTune instead.`,
     );
-  const recommend = file.requests?.recommend;
+  const copyRequests = from
+    ? categoryJobRequests(file, current, from, shown)
+    : null;
+  const recommend = copyRequests?.recommend ?? file.requests?.recommend;
   if (!recommend)
     throw new UsageError(
       `${shown}: give requests.recommend. DevTune saves a job with its add and recommend requests.`,
@@ -113,19 +138,29 @@ export function pushRequest(
   return {
     route: 'job',
     body: {
-      job: file.job,
-      source_category_id: null,
-      requests: {
+      job: from ? (current?.name ?? from.name) : file.job,
+      source_category_id: from ? categoryId(list, from.slug, shown) : null,
+      requests: copyRequests ?? {
         add: file.requests?.add,
         recommend,
         hosted: file.requests?.hosted ?? null,
       },
-      building_blocks: current?.building_blocks ?? NO_BUILDING_BLOCKS,
+      ...(!from
+        ? { building_blocks: current?.building_blocks ?? NO_BUILDING_BLOCKS }
+        : {}),
       tools: [
         ...tools.map((ref) => jobTool(ref, current)),
-        // A tool DevTune measures that is neither yours nor a competitor, which a file can't name.
+        // A new copy inherits every category tool, including ones the file doesn't select.
+        ...(from && !current ? (CATEGORY_TOOLS[from.slug] ?? []) : [])
+          .filter((tool) => !listed.has(tool))
+          .map((tool_key) => ({ tool_key })),
+        // A tool DevTune measures that is neither yours nor a competitor, which a file can't name. A copy keeps every
+        // tool it holds, as the setup route does; only a job drops a tool its file stops selecting.
         ...(current?.tools ?? [])
-          .filter((row) => !listed.has(row.tool_key) && !held.has(row.tool_key))
+          .filter(
+            (row) =>
+              !listed.has(row.tool_key) && (from || !held.has(row.tool_key)),
+          )
           .map(heldJobTool),
       ],
       own_tool_key: file.tools?.own === undefined ? null : key(file.tools.own),
@@ -133,6 +168,43 @@ export function pushRequest(
       ...shared,
     },
   };
+}
+
+/**
+ * The job API requires add and recommend, allows a null hosted request, and keeps improve and the
+ * ending unchanged. A copy's inherited improve request can therefore only be kept as held.
+ */
+function categoryJobRequests(
+  file: SetupFile,
+  current: DevtuneSetup | null,
+  from: NonNullable<ReturnType<typeof findCategoryRequests>>,
+  shown: string,
+) {
+  const published = (intent: (typeof PROMPT_INTENTS)[number]) =>
+    from.prompts.find((prompt) => prompt.intent === intent)?.text ?? null;
+  const effective = (intent: (typeof PROMPT_INTENTS)[number]) =>
+    file.requests?.[intent] === undefined
+      ? published(intent)
+      : file.requests[intent];
+  const improve = effective('improve');
+  const heldImprove = current
+    ? (current.requests.improve ?? null)
+    : published('improve');
+  if (improve !== heldImprove)
+    throw new UsageError(
+      `${shown}: requests.improve can't be changed while push saves tools to a category copy. Keep the inherited or pulled requests.improve value, then push again.`,
+    );
+  const add = effective('add');
+  const recommend = effective('recommend');
+  for (const [intent, text] of [
+    ['add', add],
+    ['recommend', recommend],
+  ])
+    if (!text)
+      throw new UsageError(
+        `${shown}: requests.${intent} can't be left out while push saves tools to a category copy. Give its text, push the tools, then push the omission separately.`,
+      );
+  return { add, recommend, hosted: effective('hosted') };
 }
 
 /** How the setup save takes a request a copy leaves out. */

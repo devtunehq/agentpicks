@@ -27,7 +27,7 @@ import { parse } from 'yaml';
 
 import { findCategoryRequests } from '../catalogue/categories';
 import type { Sandbox, SandboxProvider } from '../sandbox/provider';
-import { devtuneSetupNames, fileDigest } from '../setup/link';
+import { devtuneSetupFile, devtuneSetupNames, fileDigest } from '../setup/link';
 import { setupFileSchema } from '../setup/schema';
 import {
   completed,
@@ -113,7 +113,7 @@ function copySetup(digest = D('b')) {
     id: COPY_ID,
     category_slug: 'error-tracking-copy',
     name: 'Error tracking',
-    kind: 'copy',
+    kind: 'copy' as const,
     source_category_slug: 'error-tracking',
     snapshot_digest: digest,
     requests: Object.fromEntries(
@@ -1079,8 +1079,10 @@ agents: [claude-code]
     });
   });
 
-  it("refuses a from file's own tool DevTune doesn't hold as written, before sending", async () => {
-    const OWN = `from: error-tracking
+  it("pushes a category file's own tool, links it in sync and leaves it alone on pull", async () => {
+    writeFileSync(
+      setupPath('errors'),
+      `from: error-tracking
 tools:
   own:
     key: acme-errors
@@ -1090,17 +1092,81 @@ tools:
         npm: ['@acme/errors']
 stacks: [nextjs]
 agents: [codex]
-`;
-    writeFileSync(setupPath('errors'), OWN);
-    const fresh = stubFetch({ [`GET ${SETUPS}`]: [setupList([])] });
-    const added = context();
-    expect(await main(['push', 'errors'], added.ctx)).toBe(1);
-    expect(added.errors).toEqual([
-      "agentpicks/errors.yaml: acme-errors isn't a tool of error-tracking. Add it to a category copy in the DevTune app, then run agentpicks pull.",
+`,
+    );
+    const calls = stubFetch({
+      [`GET ${SETUPS}`]: [setupList([])],
+      [`PUT ${JOB}`]: [savedSetup(COPY_ID, 'error-tracking-copy', D('b'))],
+    });
+    const push = context();
+    expect(
+      await main(['push', 'errors'], push.ctx),
+      push.errors.join('\n'),
+    ).toBe(0);
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      `GET ${SETUPS}`,
+      `PUT ${JOB}`,
     ]);
-    expect(fresh.map((c) => c.method)).toEqual(['GET']);
+    expect(JSON.parse(calls.at(-1)!.body!)).toMatchObject({
+      job: ERRORS.name,
+      source_category_id: 'c0000000-0000-4000-8000-000000000001',
+      own_tool_key: 'acme-errors',
+      snapshot_digest: null,
+      tools: expect.arrayContaining([
+        { tool_key: 'sentry' },
+        {
+          tool_key: 'acme-errors',
+          display_name: 'Acme Errors',
+          brand_domain: null,
+          signals: {
+            packages: { npm: ['@acme/errors'] },
+            configNames: [],
+            importPatterns: [],
+            brandDomains: [],
+          },
+        },
+      ]),
+    });
+    expect(readYaml('errors')).toMatchObject({
+      id: COPY_ID,
+      synced: { setup: D('b'), file: expect.stringMatching(/^[0-9a-f]{64}$/) },
+    });
+    const saved = {
+      ...copySetup(),
+      own_tool_key: 'acme-errors',
+      tools: [
+        ...copySetup().tools.map((tool) => ({ ...tool, signals: null })),
+        {
+          tool_key: 'acme-errors',
+          display_name: 'Acme Errors',
+          brand_domain: null,
+          signals: {
+            packages: { npm: ['@acme/errors'] },
+            configNames: [],
+            importPatterns: [],
+            brandDomains: [],
+          },
+        },
+      ],
+      agent_models: [{ agent: 'codex', model: 'gpt-6.1-sol' }],
+    };
+    const mapped = devtuneSetupFile(saved);
+    expect('file' in mapped && fileDigest(mapped.file)).toBe(
+      fileDigest(readYaml('errors')),
+    );
+    const linked = readFileSync(setupPath('errors'), 'utf8');
+    const reads = stubFetch({
+      [`GET ${SETUPS}`]: [setupList([saved]), setupList([saved])],
+    });
+    const list = context();
+    expect(await main(['list'], list.ctx)).toBe(0);
+    expect(list.lines.join('\n')).toContain('in sync');
+    expect(await main(['pull', 'errors'], context().ctx)).toBe(0);
+    expect(readFileSync(setupPath('errors'), 'utf8')).toBe(linked);
+    expect(reads.every((c) => c.method === 'GET')).toBe(true);
+  });
 
-    // Linked, with the tool's signals edited in the file: DevTune holds it otherwise, so push refuses too.
+  it("saves edits to a copy's full tool entry and adds another catalogue tool through the job route", async () => {
     await pulled([ownToolCopy()]);
     const path = setupPath('error-tracking-setup');
     writeFileSync(
@@ -1112,30 +1178,47 @@ agents: [codex]
     );
     const linked = stubFetch({
       [`GET ${SETUPS}`]: [setupList([ownToolCopy()])],
+      [`PUT ${JOB}`]: [savedSetup(COPY_ID, 'error-tracking-copy', D('e'))],
     });
     const edited = context();
-    expect(await main(['push', 'error-tracking-setup'], edited.ctx)).toBe(1);
-    expect(edited.errors).toEqual([
-      "agentpicks/error-tracking-setup.yaml: acme-errors isn't a tool of error-tracking. Add it to a category copy in the DevTune app, then run agentpicks pull.",
-    ]);
-    expect(linked.map((c) => c.method)).toEqual(['GET']);
+    expect(
+      await main(['push', 'error-tracking-setup'], edited.ctx),
+      edited.errors.join('\n'),
+    ).toBe(0);
+    expect(JSON.parse(linked.at(-1)!.body!)).toMatchObject({
+      setup: COPY_ID,
+      snapshot_digest: D('b'),
+      requests: { hosted: null },
+      tools: expect.arrayContaining([
+        expect.objectContaining({
+          tool_key: 'acme-errors',
+          signals: expect.objectContaining({
+            configNames: ['ACME_ERRORS_TOKEN'],
+          }),
+        }),
+      ]),
+    });
 
-    // A catalogue tool by key that error-tracking doesn't measure and the copy doesn't hold.
+    await pulled([ownToolCopy()]);
     writeFileSync(
       path,
-      readFileSync(path, 'utf8')
-        .replace('ACME_ERRORS_TOKEN', 'ACME_ERRORS_KEY')
-        .replace('- rollbar', '- clerk'),
+      readFileSync(path, 'utf8').replace('- rollbar', '- clerk'),
     );
     const byKey = stubFetch({
       [`GET ${SETUPS}`]: [setupList([ownToolCopy()])],
+      [`PUT ${JOB}`]: [savedSetup(COPY_ID, 'error-tracking-copy', D('e'))],
     });
     const keyed = context();
-    expect(await main(['push', 'error-tracking-setup'], keyed.ctx)).toBe(1);
-    expect(keyed.errors.join('\n')).toMatch(
-      /error-tracking has no tool clerk\. .*add clerk to a category copy in the DevTune app, then run agentpicks pull\./,
-    );
-    expect(byKey.map((c) => c.method)).toEqual(['GET']);
+    expect(
+      await main(['push', 'error-tracking-setup'], keyed.ctx),
+      keyed.errors.join('\n'),
+    ).toBe(0);
+    expect(JSON.parse(byKey.at(-1)!.body!)).toMatchObject({
+      source_category_id: 'c0000000-0000-4000-8000-000000000001',
+      competitor_tool_keys: ['sentry', 'clerk'],
+      tools: expect.arrayContaining([{ tool_key: 'clerk' }]),
+      snapshot_digest: D('b'),
+    });
   });
 
   it("keeps a copy's left-out request through pull and push, and deleting an override or null goes back to the category's", async () => {
@@ -1537,6 +1620,73 @@ describe('agentpicks run, linked to DevTune', () => {
     expect(await main(['upload', dir], after.ctx)).toBe(0);
     expect(after.errors).toEqual([]);
     expect(uploadedCategory(sent)).toEqual(['job-add-feature-flags']);
+  });
+
+  it('runs a category file adding its own tool after push and uploads its earlier kept bundle under the copy', async () => {
+    writeFileSync(
+      setupPath('errors'),
+      `from: error-tracking
+tools:
+  own:
+    key: acme-errors
+    name: Acme Errors
+    signals:
+      packages:
+        npm: ['@acme/errors']
+stacks: [nextjs]
+agents: [claude-code]
+`,
+    );
+    const untouched = stubFetch({});
+    const before = context();
+    let sandboxes = 0;
+    before.ctx.docker!.provider = () => {
+      sandboxes++;
+      return fakeProvider();
+    };
+    expect(await main(['run', 'errors'], before.ctx)).toBe(1);
+    expect(before.errors.join('\n')).toContain(
+      'Run agentpicks push errors to save it to DevTune first',
+    );
+    expect(before.errors.join('\n')).not.toContain("push can't save tools");
+    expect(sandboxes).toBe(0);
+    const local = context();
+    expect(
+      await main(['run', 'errors', '--no-upload'], local.ctx),
+      local.errors.join('\n'),
+    ).toBe(0);
+    expect(untouched).toEqual([]);
+    const [id] = readdirSync(join(repo, 'agentpicks-runs'));
+    const dir = join(repo, 'agentpicks-runs', id!);
+    expect(
+      JSON.parse(readFileSync(join(dir, 'manifest.json'), 'utf8')).setup,
+    ).toMatchObject({
+      id: null,
+      asked: expect.stringMatching(/^[0-9a-f]{64}$/),
+    });
+    stubFetch({
+      [`GET ${SETUPS}`]: [setupList([])],
+      [`PUT ${JOB}`]: [savedSetup(COPY_ID, 'error-tracking-copy', D('b'))],
+    });
+    expect(await main(['push', 'errors'], context().ctx)).toBe(0);
+    const copy = { ...ownToolCopy(), requests: copySetup().requests };
+    const calls = stubFetch({
+      [`GET ${SETUPS}`]: [setupList([copy]), setupList([copy])],
+      ...uploadReplies(2),
+    });
+    const run = context();
+    expect(await main(['run', 'errors'], run.ctx), run.errors.join('\n')).toBe(
+      0,
+    );
+    const upload = context();
+    expect(
+      await main(['upload', dir], upload.ctx),
+      upload.errors.join('\n'),
+    ).toBe(0);
+    expect(uploadedCategory(calls)).toEqual([
+      'error-tracking-copy',
+      'error-tracking-copy',
+    ]);
   });
 
   it('uploads a custom setup run signed out with --no-upload once a push saves what it tested, and only that', async () => {

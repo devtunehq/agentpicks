@@ -22,7 +22,6 @@ import {
   devtuneSetupFile,
   devtuneSetupNames,
   fileDigest,
-  hasOwnTools,
   runDigest,
 } from '../setup/link';
 import { resolveSetup, type ResolvedSetup } from '../setup/resolve';
@@ -228,11 +227,6 @@ export async function linkUploads(
         }
       : plan;
   if (setup.id === null) {
-    // Push can't save a copy's tools beyond its category's: they are added in the DevTune app.
-    if (setup.customReason && content && hasOwnTools(content))
-      throw new UsageError(
-        `${shown} is a custom setup (${setup.customReason}), so its runs have no DevTune setup to upload under, and push can't save tools ${setup.from} doesn't have. Add them to a category copy in the DevTune app, run agentpicks pull, and run the pulled setup, or pass --no-upload to keep the bundles on this machine.`,
-      );
     if (setup.customReason)
       throw new UsageError(
         `${shown} is a custom setup (${setup.customReason}), so its runs have no DevTune setup to upload under. Run agentpicks push ${setup.name} to save it to DevTune first, or pass --no-upload to keep the bundles on this machine.`,
