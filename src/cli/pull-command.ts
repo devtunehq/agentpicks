@@ -25,7 +25,7 @@ import {
   readSetups,
   type DevtuneSetups,
 } from './setup-links';
-import { writeSetupText } from './setup-write';
+import { SCHEMA_LINE, writeSetupText } from './setup-write';
 
 export async function pullCommand(
   argv: string[],
@@ -139,10 +139,10 @@ function pullOne(
     writeSetupText(
       join(root, SETUPS_DIR),
       path,
-      linkedSetupYaml(mapped.file, {
+      `${SCHEMA_LINE}\n${linkedSetupYaml(mapped.file, {
         id: setup.id,
         setupDigest: setup.snapshot_digest,
-      }),
+      })}`,
       { replace: force || local !== undefined, shown: (at) => shown(at, ctx) },
     );
   } catch (error) {

@@ -43,6 +43,7 @@ import {
 } from './fake-devtune';
 import { fakeHost } from './fake-host';
 import { main, type CliContext } from './main';
+import { SCHEMA_LINE } from './setup-write';
 
 const D = (c: string) => c.repeat(64);
 const JOB_ID = '1a000000-0000-4000-8000-000000000001';
@@ -486,6 +487,7 @@ describe('agentpicks pull', () => {
     expect(await main(['validate'], validate.ctx)).toBe(0);
 
     const pulled = readFileSync(setupPath('trace'), 'utf8');
+    expect(pulled.split('\n')[0]).toBe(SCHEMA_LINE);
     writeFileSync(
       setupPath('trace'),
       pulled.replace('job: Trace', 'job: Trac'),
@@ -1272,7 +1274,7 @@ agents: [codex]
 
 describe('agentpicks run, linked to DevTune', () => {
   const signIn =
-    'Uploading needs a DevTune sign-in or project API key. Run agentpicks login, or set DEVTUNE_API_KEY and DEVTUNE_PROJECT_ID. To keep bundles on this machine only, pass --no-upload.';
+    'Uploading needs a DevTune sign-in or project API key. Run agentpicks login, or set DEVTUNE_API_KEY and DEVTUNE_PROJECT_ID. To keep bundles on this machine only, pass --no-upload, or set AGENTPICKS_NO_UPLOAD=1 for every run.';
 
   it('keeps upload sign-in guidance for a signed-out run of a linked file', async () => {
     await pulled([jobSetup()]);

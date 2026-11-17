@@ -2,7 +2,7 @@
  * ABOUTME: Writes a setup file into `agentpicks/` for init, pull and push, never through a
  * symbolic link: a checkout can hold one at the directory or the file's path that points anywhere
  * on the machine. The text goes to a temporary file beside the target, which is then renamed over
- * it or linked into place.
+ * it or linked into place. It also holds the schema line init and pull start a file with.
  */
 import { randomUUID } from 'node:crypto';
 import {
@@ -18,7 +18,14 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
+import packageJson from '../../package.json';
 import { UsageError } from './errors';
+
+/** The setup file's JSON Schema as this version publishes it, on the public mirror at this version's tag. */
+export const SETUP_SCHEMA_URL = `https://raw.githubusercontent.com/devtunehq/agentpicks/v${packageJson.version}/schema/setup.v1.json`;
+
+/** The first line init and pull write, which points an editor with YAML support at the schema. */
+export const SCHEMA_LINE = `# yaml-language-server: $schema=${SETUP_SCHEMA_URL}`;
 
 /** Whether `path` is a symbolic link, dangling or not. */
 function isSymlink(path: string) {

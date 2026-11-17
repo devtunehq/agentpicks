@@ -63,6 +63,7 @@ import {
   trackSandboxes,
   type CliContext,
 } from './main';
+import { SETUP_SCHEMA_URL } from './setup-write';
 
 const KEY = 'sk-ant-api03-secret-value-000000';
 const DEVTUNE_ENV = {
@@ -1011,11 +1012,39 @@ describe('agentpicks run, uploading', () => {
       await main(['run', '--category', 'ci', '--stack', 'nextjs'], ctx),
     ).toBe(1);
     expect(ctx.errors).toEqual([
-      'Uploading needs a DevTune sign-in or project API key. Run agentpicks login, or set DEVTUNE_API_KEY and DEVTUNE_PROJECT_ID. To keep bundles on this machine only, pass --no-upload.',
+      'Uploading needs a DevTune sign-in or project API key. Run agentpicks login, or set DEVTUNE_API_KEY and DEVTUNE_PROJECT_ID. To keep bundles on this machine only, pass --no-upload, or set AGENTPICKS_NO_UPLOAD=1 for every run.',
     ]);
     expect(ctx.dockerCalls).toEqual([]);
     expect(fake.execs).toEqual([]);
     expect(calls).toEqual([]);
+  });
+
+  it('keeps every bundle on this machine under AGENTPICKS_NO_UPLOAD, signed out or in, and says how to send them later', async () => {
+    for (const [env, out, shown] of [
+      [{}, './agentpicks-runs', './agentpicks-runs'],
+      [DEVTUNE_ENV, 'my runs', "'my runs'"],
+    ] as const) {
+      const calls = stubFetch({});
+      const ctx = context(
+        fakeHost({
+          commands: CLAUDE,
+          env: { ...env, ANTHROPIC_API_KEY: KEY, AGENTPICKS_NO_UPLOAD: '1' },
+        }),
+        fakeProvider({ artifacts: ARTIFACTS }).provider,
+        cwd,
+      );
+      expect(
+        await main(
+          ['run', '--category', 'ci', '--stack', 'nextjs', '--out', out],
+          ctx,
+        ),
+      ).toBe(0);
+      expect(ctx.lines).toContain(
+        `Keeps each bundle on this machine only. agentpicks upload ${shown} sends them to DevTune later.`,
+      );
+      expect(ctx.lines.at(-1)).toBe(`1 of 1 run written to ${join(cwd, out)}`);
+      expect(calls).toEqual([]);
+    }
   });
 
   it('prints a refusal and how to send the bundle later, and starts no further runs', async () => {
@@ -1296,7 +1325,7 @@ describe('agentpicks login, in the browser', () => {
     expect(await main(['login'], ctx)).toBe(0);
     const { authorize } = await browser.visit;
     expect(ctx.lines).toEqual([
-      `Open this address in a browser to sign in and choose your project:\n${authorize.href}`,
+      `Open this address in a browser to sign in and choose your project:\n${authorize.href}\nNo DevTune project yet? Sign up at ${new URL('/auth/sign-up', TARGET.baseUrl).href} and create one, or have your coding agent set one up (https://docs.devtune.ai/getting-started/agent-setup), then run agentpicks login again.`,
       LOGO,
       `Signed in to Acme (${TARGET.projectId}).`,
       'Granted: actions.write, agent_picks.run, project.read, visibility.read.',
@@ -1861,6 +1890,23 @@ describe('agentpicks', () => {
     expect(ctx.errors).toEqual([]);
     for (const command of ['login', 'init', 'run', 'results', 'list'])
       expect(USAGE).toContain(`agentpicks ${command}`);
+  });
+
+  it('prints the setup schema the package publishes, at the address init points editors to', async () => {
+    const ctx = context(fakeHost(), fakeProvider().provider, cwd);
+    expect(await main(['schema'], ctx)).toBe(0);
+    expect(JSON.parse(ctx.lines.join('\n'))).toEqual(
+      JSON.parse(
+        readFileSync(join(__dirname, '../../schema/setup.v1.json'), 'utf8'),
+      ),
+    );
+    expect(SETUP_SCHEMA_URL).toBe(
+      `https://raw.githubusercontent.com/devtunehq/agentpicks/v${packageJson.version}/schema/setup.v1.json`,
+    );
+    expect(await main(['schema', '--json'], ctx)).toBe(1);
+    expect(ctx.errors).toEqual([
+      'agentpicks schema takes no arguments, not --json.',
+    ]);
   });
 
   it('prints its version, and its usage for an unknown command, without the logo', async () => {

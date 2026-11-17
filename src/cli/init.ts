@@ -5,7 +5,9 @@
  * in (`init-draft.ts`), else typed. Each question shows its default and Enter takes it; `--yes`
  * takes every default and asks nothing, refusing by name when one can't be detected. The file is
  * checked as `validate` checks it before it is written, through a temporary file linked into place
- * so a setup that appeared meanwhile is never replaced without `--force`.
+ * so a setup that appeared meanwhile is never replaced without `--force`. Its first line points an
+ * editor at the setup schema. The last line says how to run it: with --no-upload when nothing here
+ * can upload.
  */
 import { existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
@@ -31,12 +33,13 @@ import {
   SETUP_TEXT_MAX_LENGTH,
 } from '../setup/rules';
 import type { SetupFile, SetupToolEntry } from '../setup/schema';
+import { devtuneTarget } from './devtune-login';
 import { UsageError } from './errors';
 import { detectRepository, type DetectedRepository } from './init-detect';
 import { devtuneDrafting, type Drafting, type JobDraft } from './init-draft';
 import type { CliContext } from './main';
 import { SELF_RUN_AGENTS } from './self-run-agents';
-import { writeSetupText } from './setup-write';
+import { SCHEMA_LINE, writeSetupText } from './setup-write';
 
 type Answer<T> = { value: T } | { problem: string };
 
@@ -99,7 +102,7 @@ export async function initCommand(
   if (runs !== 1) file.runs = runs;
 
   const dir = join(wizard.detected.root, SETUPS_DIR);
-  const text = stringify(file);
+  const text = `${SCHEMA_LINE}\n${stringify(file)}`;
   const name = await ask<string>(wizard, {
     label: 'Name',
     fallback: file.from ?? slug(file.job!),
@@ -131,19 +134,40 @@ export async function initCommand(
   ctx.out('');
   ctx.out(`Wrote ${shown}:`);
   ctx.out('');
-  for (const line of text.trimEnd().split('\n')) ctx.out(`  ${line}`);
+  for (const line of text.trimEnd().split('\n').slice(1)) ctx.out(`  ${line}`);
   ctx.out('');
   if (!file.agents)
     ctx.out(
       'It names no agents, so run uses the one agent installed where it runs.',
     );
   const custom = checkSetupText(path, text).setup!.customReason !== null;
-  ctx.out(
-    custom
-      ? `To upload its runs, first run: agentpicks push ${name}, then agentpicks run ${name}. To keep bundles on this machine only, run: agentpicks run ${name} --no-upload.`
-      : `Run it with: agentpicks run ${name}`,
-  );
+  if (ctx.io.env.AGENTPICKS_NO_UPLOAD)
+    ctx.out(`Run it with: agentpicks run ${name}`);
+  else if (!signedIn(ctx.io)) {
+    ctx.out(`Run it with: agentpicks run ${name} --no-upload`);
+    ctx.out(
+      `That needs no DevTune account. To upload its runs to DevTune, sign in with agentpicks login${custom ? `, then run agentpicks push ${name}` : ''}.`,
+    );
+  } else
+    ctx.out(
+      custom
+        ? `To upload its runs, first run: agentpicks push ${name}, then agentpicks run ${name}. To keep bundles on this machine only, run: agentpicks run ${name} --no-upload.`
+        : `Run it with: agentpicks run ${name}`,
+    );
   return 0;
+}
+
+/**
+ * Whether `run` would upload here without --no-upload. Any refusal (no sign-in, or an API address
+ * or key that doesn't read) means it wouldn't, and the file is already written, so none fails init.
+ */
+function signedIn(io: CliContext['io']): boolean {
+  try {
+    devtuneTarget(io);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function parseInitArgs(argv: string[]) {
@@ -335,18 +359,22 @@ async function askRequest(
   drafted: JobDraft | null,
 ): Promise<string | null> {
   const draft = drafted?.requests.find((r) => r.intent === intent)?.text;
+  // push saves a job with its add and recommend requests, so both are asked for; hosted is optional.
+  const optional = intent === 'hosted';
   return ask<string | null>(wizard, {
     label:
       intent === 'add'
         ? 'The add request, which a run asks'
-        : `The ${intent} request, or none`,
-    fallback: draft ?? (intent === 'add' ? null : 'none'),
+        : intent === 'recommend'
+          ? 'The recommend request, which DevTune saves with the add request'
+          : `The ${intent} request, or none`,
+    fallback: draft ?? (optional ? 'none' : null),
     read: (answer) => {
-      if (answer === 'none' && intent !== 'add') return { value: null };
+      if (answer === 'none' && optional) return { value: null };
       return !badLength(answer)
         ? { value: answer }
         : {
-            problem: `Write the ${intent} request in ${SETUP_REQUEST_MIN_LENGTH} to ${SETUP_TEXT_MAX_LENGTH} characters${intent === 'add' ? '' : ', or none'}.`,
+            problem: `Write the ${intent} request in ${SETUP_REQUEST_MIN_LENGTH} to ${SETUP_TEXT_MAX_LENGTH} characters${optional ? ', or none' : ''}.`,
           };
     },
   });

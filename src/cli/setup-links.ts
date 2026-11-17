@@ -10,6 +10,7 @@ import { basename, dirname, extname } from 'node:path';
 
 import { parseDocument } from 'yaml';
 
+import { shellArg } from '../assets/script';
 import { findCategoryRequests } from '../catalogue/categories';
 import {
   listSetupFiles,
@@ -322,7 +323,7 @@ function pushedSince(
         `${shown} tested a version of ${record.name} that the file no longer holds, so no push can save what it tested. ${runAgain}`,
       );
     throw new UsageError(
-      `${shown} tested what ${record.name} holds now, which isn't saved to DevTune yet. Run agentpicks push ${record.name}, then agentpicks upload ${dir} again.`,
+      `${shown} tested what ${record.name} holds now, which isn't saved to DevTune yet. Run agentpicks push ${record.name}, then agentpicks upload ${shellArg(dir)} again.`,
     );
   }
   if (!asked || (record.id && record.id !== content.id))

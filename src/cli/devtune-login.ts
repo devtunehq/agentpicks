@@ -115,6 +115,15 @@ function apiRoot(value: string): string | null {
   return url.href.replace(/\/$/, '');
 }
 
+/** Where a person without a DevTune account signs up, at the API's own address. */
+export function signUpUrl(baseUrl = DEFAULT_API_BASE_URL): string {
+  return new URL('/auth/sign-up', baseUrl).href;
+}
+
+/** The docs page whose prompt has a person's coding agent sign them up and set up a DevTune project. */
+export const AGENT_SETUP_URL =
+  'https://docs.devtune.ai/getting-started/agent-setup';
+
 /**
  * DEVTUNE_API_BASE_URL, or devtune.ai's API. HTTPS only, except on loopback, since the key or
  * token goes with every request.
@@ -187,7 +196,7 @@ export function devtuneTarget(
     throw new NotLoggedInError(
       purpose === 'setups'
         ? 'Pushing or pulling setups needs a DevTune sign-in or project API key. Run agentpicks login, or set DEVTUNE_API_KEY and DEVTUNE_PROJECT_ID.'
-        : 'Uploading needs a DevTune sign-in or project API key. Run agentpicks login, or set DEVTUNE_API_KEY and DEVTUNE_PROJECT_ID. To keep bundles on this machine only, pass --no-upload.',
+        : 'Uploading needs a DevTune sign-in or project API key. Run agentpicks login, or set DEVTUNE_API_KEY and DEVTUNE_PROJECT_ID. To keep bundles on this machine only, pass --no-upload, or set AGENTPICKS_NO_UPLOAD=1 for every run.',
     );
   if (io.env.DEVTUNE_API_KEY) assertApiKey(apiKey, 'DEVTUNE_API_KEY');
   if (!z.uuid().safeParse(projectId).success)

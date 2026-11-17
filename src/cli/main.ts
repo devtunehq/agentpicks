@@ -4,14 +4,16 @@
  * completed run, which it uploads to the customer's DevTune project unless --no-upload; `upload`
  * sends bundles written earlier; `login` signs in through the browser, or saves a project API key,
  * for uploads; `list`, `pull` and `push` link setup files to the project's DevTune setups;
- * `cleanup` removes every container and image agentpicks made. Everything is checked, and what a run copies and
- * needs is printed, before the first container starts.
+ * `schema` prints the setup file's JSON Schema; `cleanup` removes every container and image
+ * agentpicks made. Everything is checked, and what a run copies and needs is printed, before the
+ * first container starts.
  */
 import { randomUUID } from 'node:crypto';
 import { join, relative, resolve } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 
 import packageJson from '../../package.json';
+import { shellArg } from '../assets/script';
 import { DockerSandboxProvider } from '../sandbox/docker';
 import type { SandboxPlatform } from '../sandbox/platform';
 import type { Sandbox, SandboxProvider } from '../sandbox/provider';
@@ -22,8 +24,6 @@ import {
   readSetupFiles,
   SETUPS_DIR,
   setupsRoot,
-  WRITE_ONE,
-  type SetupOnDisk,
 } from '../setup/files';
 import type { ResolvedSetup } from '../setup/resolve';
 import type { SetupFile } from '../setup/schema';
@@ -41,8 +41,10 @@ import { CUSTOM_SETUP_CATEGORY_PREFIX } from './bundle';
 import { categoryCopyPlan } from './category-copy';
 import { resolveCredentials } from './credentials';
 import {
+  AGENT_SETUP_URL,
   devtuneTarget,
   loginSaved,
+  signUpUrl,
   stopRenewing,
   type DevtuneTarget,
 } from './devtune-login';
@@ -80,6 +82,7 @@ import {
   linkUploads,
   readSetups,
 } from './setup-links';
+import { SETUP_SCHEMA_URL } from './setup-write';
 import { isFormatControl } from './terminal-text';
 import {
   findBundles,
@@ -87,6 +90,7 @@ import {
   uploadBundle,
   type BundleOnDisk,
 } from './upload';
+import { schemaCommand, validateCommand } from './validate-command';
 
 export const RUNNER = {
   name: '@devtune/agentpicks',
@@ -105,6 +109,7 @@ export const USAGE = `Usage:
   agentpicks pull [<setup>] [--force]
   agentpicks push [<setup>]
   agentpicks validate [<setup>...]
+  agentpicks schema
   agentpicks upload <dir>
   agentpicks results [<dir>...] [--json]
   agentpicks login [--no-browser]
@@ -117,7 +122,8 @@ init      Writes a setup file, agentpicks/<name>.yaml, from questions whose defa
           of the same name. Signed in, DevTune drafts the requests and tools of your own job.
 run       Tests the coding agent installed here in a fresh Docker container per run, writes
           one bundle per completed run to --out (default ./agentpicks-runs), and uploads it to
-          your DevTune project. --no-upload keeps bundles on this machine only. --repo tests
+          your DevTune project. --no-upload keeps bundles on this machine only, as every run
+          does while AGENTPICKS_NO_UPLOAD is set to anything. --repo tests
           your repository's committed files at HEAD, or at --ref; uncommitted changes aren't
           included. Uploading a --repo run needs the repository to have a remote.
           <setup> is a setup file's name in the repository's agentpicks folder, or its path,
@@ -140,6 +146,8 @@ push      Saves a setup file, or every one, to DevTune and links it. A setup cha
           DevTune since the file last saw it is refused as setup_changed: pull first.
 validate  Checks every setup file, or the ones named, against the setup schema and the
           catalogue. Exits non-zero if any fails, naming the file and field.
+schema    Prints the setup file's JSON Schema, which is also at
+          ${SETUP_SCHEMA_URL}
 upload    Uploads a bundle directory, or every bundle in an --out directory. Uploading again
           sends only what isn't stored yet. A custom setup's bundle, or one of changes not
           pushed, uploads once agentpicks push has saved the add request and tools it tested.
@@ -160,17 +168,26 @@ A setup file, agentpicks/error-tracking.yaml:
   from: error-tracking
   stacks: [nextjs]
 
-Its schema is schema/setup.v1.json in this package; the README describes every field.
+init and pull start each file with a line that points an editor at the schema; the README
+describes every field.
 `;
 
-/** What `agentpicks` on its own prints: the commands to start with, then where the rest are. */
+/**
+ * What `agentpicks` on its own prints: the commands to start with, that runs need no DevTune
+ * account, how to get one for uploads, then where the rest are.
+ */
 export const INTRO = `Test which tools coding agents pick when they build your kind of app.
 
-  agentpicks login     Sign in to your DevTune project
   agentpicks init      Write a setup file for this repository
   agentpicks run       Run a setup with the coding agent installed here
   agentpicks results   Show which tool each run picked
   agentpicks list      List this repository's setups and your project's
+  agentpicks login     Sign in to DevTune to upload runs for its analysis
+
+Runs need no DevTune account: pass --no-upload to run, or set AGENTPICKS_NO_UPLOAD=1, and
+bundles stay on this machine. To upload them later, sign up at ${signUpUrl()}
+and create a project, or have your coding agent set one up:
+${AGENT_SETUP_URL}
 
 agentpicks --help lists every command and flag.`;
 
@@ -279,6 +296,7 @@ export async function main(argv: string[], given: CliContext): Promise<number> {
     if (command === 'pull') return await pullCommand(rest, ctx);
     if (command === 'push') return await pushCommand(rest, ctx);
     if (command === 'validate') return validateCommand(rest, ctx);
+    if (command === 'schema') return schemaCommand(rest, ctx);
     if (command === 'results') return resultsCommand(rest, ctx);
     ctx.err(`agentpicks has no ${command} command.\n\n${USAGE}`);
     return 1;
@@ -302,6 +320,9 @@ function docker(ctx: CliContext) {
 
 async function runCommand(argv: string[], ctx: CliContext): Promise<number> {
   const command = parseRunCommand(argv, { picker: Boolean(ctx.interactive) });
+  // AGENTPICKS_NO_UPLOAD, set to anything, is --no-upload on every run.
+  if (ctx.io.env.AGENTPICKS_NO_UPLOAD)
+    (command.kind === 'category' ? command.args : command.flags).upload = false;
   // Uploading, a category runs as the project's copy of it, linked once the sign-in is checked.
   if (command.kind === 'category')
     return runPlan(categoryPlan(command.args, ctx.cwd), ctx, () =>
@@ -458,10 +479,11 @@ async function runPlan(
     );
   for (const each of credentials)
     for (const line of each.summary) ctx.out(line);
-  if (target)
-    ctx.out(
-      `Uploads each bundle to DevTune project ${target.projectId} once it is written.`,
-    );
+  ctx.out(
+    target
+      ? `Uploads each bundle to DevTune project ${target.projectId} once it is written.`
+      : `Keeps each bundle on this machine only. agentpicks upload ${shellArg(plan.out)} sends them to DevTune later.`,
+  );
   ctx.out(runRequirements());
 
   const image = await ensureSandboxImage({
@@ -573,7 +595,7 @@ async function uploadPrinted(
     if (!(error instanceof UploadError)) throw error;
     ctx.err(error.message);
     ctx.err(
-      `The bundle stays in ${dir}. Send it with: agentpicks upload ${dir}`,
+      `The bundle stays in ${dir}. Send it with: agentpicks upload ${shellArg(dir)}`,
     );
     return false;
   }
@@ -622,53 +644,6 @@ async function uploadCommand(argv: string[], ctx: CliContext): Promise<number> {
   if (dirs.length > 1)
     ctx.out(`${uploaded} of ${dirs.length} bundles uploaded to DevTune.`);
   return uploaded === dirs.length ? 0 : 1;
-}
-
-/**
- * `agentpicks validate [setup…]`: checks every setup file in the repository, or the ones named, against
- * the schema and the catalogue. Exits non-zero when any fails, naming its file and field.
- */
-function validateCommand(argv: string[], ctx: CliContext): number {
-  const flag = argv.find((arg) => arg.startsWith('-'));
-  if (flag)
-    throw new UsageError(`agentpicks validate takes no flags, not ${flag}.`);
-  const root = setupsRoot(ctx.cwd);
-  // A file named by path is read alone, as `run <path>` reads it, so a twin name doesn't fail it.
-  const files: (SetupOnDisk | { path: string; error: string })[] =
-    argv.length > 0
-      ? argv.map((arg) => {
-          try {
-            return readSetupFile(findSetup(arg, ctx.cwd));
-          } catch (error) {
-            if (!(error instanceof UsageError)) throw error;
-            return { path: arg, error: error.message };
-          }
-        })
-      : readSetupFiles(root);
-  if (files.length === 0) {
-    ctx.out(`${join(root, SETUPS_DIR)} holds no setup files. ${WRITE_ONE}`);
-    return 0;
-  }
-  let failed = 0;
-  for (const file of files) {
-    if ('error' in file) {
-      failed++;
-      ctx.err(file.error);
-      continue;
-    }
-    if (file.problems.length === 0) {
-      ctx.out(`${relative(ctx.cwd, file.path) || file.path}: valid`);
-      continue;
-    }
-    failed++;
-    for (const problem of file.problems)
-      ctx.err(formatProblem(file.path, problem, ctx.cwd));
-  }
-  const count = files.length;
-  ctx.out(
-    `${count - failed} of ${count} setup file${count === 1 ? '' : 's'} valid.`,
-  );
-  return failed === 0 ? 0 : 1;
 }
 
 async function cleanupCommand(ctx: CliContext): Promise<number> {

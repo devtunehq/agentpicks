@@ -28,6 +28,7 @@ import { fakeHost } from './fake-host';
 import type { HostIo } from './host';
 import { detectRepository } from './init-detect';
 import { main, type CliContext } from './main';
+import { SCHEMA_LINE } from './setup-write';
 
 const ANTHROPIC_KEY = 'sk-ant-api03-secret-value-000000';
 const DRAFTS = `${TARGET.baseUrl}/projects/${TARGET.projectId}/agent-picks`;
@@ -213,8 +214,38 @@ describe('agentpicks init --yes', () => {
       repo: '.',
       agents: ['claude-code'],
     });
-    expect(lines.at(-1)).toBe('Run it with: agentpicks run error-tracking');
+    expect(setupText('error-tracking').split('\n')[0]).toBe(SCHEMA_LINE);
+    expect(lines.slice(-2)).toEqual([
+      'Run it with: agentpicks run error-tracking --no-upload',
+      'That needs no DevTune account. To upload its runs to DevTune, sign in with agentpicks login.',
+    ]);
     await validates('error-tracking');
+  });
+
+  it('writes the setup and says to run it with --no-upload when the API address is unusable', async () => {
+    nextApp();
+    const { ctx, lines, errors } = context(
+      fakeHost({ env: { DEVTUNE_API_BASE_URL: 'invalid' } }),
+      null,
+    );
+    expect(await main(['init', '--yes'], ctx)).toBe(0);
+    expect(errors).toEqual([]);
+    expect(lines.at(-2)).toBe(
+      'Run it with: agentpicks run error-tracking --no-upload',
+    );
+  });
+
+  it('ends with run and no --no-upload where runs upload by default, or AGENTPICKS_NO_UPLOAD keeps them here', async () => {
+    nextApp();
+    const envs: Record<string, string>[] = [
+      { DEVTUNE_API_KEY: TARGET.apiKey, DEVTUNE_PROJECT_ID: TARGET.projectId },
+      { AGENTPICKS_NO_UPLOAD: '1' },
+    ];
+    for (const env of envs) {
+      const { ctx, lines } = context(fakeHost({ env }), null);
+      expect(await main(['init', '--yes', '--force'], ctx)).toBe(0);
+      expect(lines.at(-1)).toBe('Run it with: agentpicks run error-tracking');
+    }
   });
 
   it('plans a category setup with every default as the matching run --category --stack', async () => {
@@ -369,7 +400,9 @@ describe('the wizard', () => {
       'Add feature flags',
       'short',
       'Add feature flags to this app, and put a new checkout page behind one.',
+      // push saves a job with its recommend request, so it has no default.
       '',
+      'What should I use for feature flags here? Pick one and set it up.',
       'none',
       // A skipped tool and no competitors leave nothing a run can recognise, so it asks again.
       'none',
@@ -387,6 +420,9 @@ describe('the wizard', () => {
     ]);
     expect(await main(['init'], ctx)).toBe(0);
     expect(errors).toContain('Write the add request in 8 to 300 characters.');
+    expect(errors).toContain(
+      'Write the recommend request in 8 to 300 characters.',
+    );
     expect(errors).toContain('Answer the requests and tools again.');
     expect(setup('add-feature-flags')).toEqual({
       job: 'Add feature flags',
@@ -412,9 +448,10 @@ describe('the wizard', () => {
       stacks: ['nextjs'],
       agents: ['claude-code'],
     });
-    expect(lines.at(-1)).toBe(
-      'To upload its runs, first run: agentpicks push add-feature-flags, then agentpicks run add-feature-flags. To keep bundles on this machine only, run: agentpicks run add-feature-flags --no-upload.',
-    );
+    expect(lines.slice(-2)).toEqual([
+      'Run it with: agentpicks run add-feature-flags --no-upload',
+      'That needs no DevTune account. To upload its runs to DevTune, sign in with agentpicks login, then run agentpicks push add-feature-flags.',
+    ]);
     await validates('add-feature-flags');
   });
 });
@@ -629,7 +666,7 @@ describe('drafting through DevTune', () => {
     const { ctx, questions, lines, errors } = context(SIGNED_IN(), [
       'Add feature flags',
       'Add feature flags to this app, and put a new checkout page behind one.',
-      'none',
+      '',
       'none',
       'Acme Flags',
       '',
@@ -681,7 +718,7 @@ describe('drafting through DevTune', () => {
       const { ctx, errors } = context(SIGNED_IN(), [
         'Add feature flags',
         'Add feature flags to this app, and put a new checkout page behind one.',
-        'none',
+        'What should I use for feature flags here? Pick one and set it up.',
         'none',
         '',
         '',

@@ -6,11 +6,13 @@ import { z } from 'zod';
 
 import { parseLoginArgs } from './args';
 import {
+  AGENT_SETUP_URL,
   apiBaseUrl,
   assertApiKey,
   loginPath,
   readSecretLine,
   saveLogin,
+  signUpUrl,
   withLoginLock,
   type DevtuneTarget,
 } from './devtune-login';
@@ -79,7 +81,7 @@ export async function loginCommand(
       baseUrl,
       notify: (url) =>
         ctx.out(
-          `Open this address in a browser to sign in and choose your project:\n${url}`,
+          `Open this address in a browser to sign in and choose your project:\n${url}\nNo DevTune project yet? Sign up at ${signUpUrl(baseUrl)} and create one, or have your coding agent set one up (${AGENT_SETUP_URL}), then run agentpicks login again.`,
         ),
       openBrowser: args.noBrowser ? null : (ctx.openBrowser ?? openBrowser),
       browserUnavailable: () =>

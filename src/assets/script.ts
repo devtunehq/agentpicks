@@ -18,3 +18,8 @@ export function script(strings: TemplateStringsArray): string {
 export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
 }
+
+/** A value as one word of a command the CLI prints to run: as written when no shell splits or expands it, else quoted. */
+export function shellArg(value: string): string {
+  return /^[\w./:@%+=,-]+$/.test(value) ? value : shellQuote(value);
+}

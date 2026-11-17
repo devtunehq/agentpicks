@@ -12,6 +12,8 @@ npx @devtune/agentpicks results
 npm install -g @devtune/agentpicks   # then: agentpicks run ...
 ```
 
+Set `AGENTPICKS_NO_UPLOAD=1` to keep every run on this machine without passing `--no-upload`.
+
 To have DevTune analyse the runs (what the agent said it picked, pick rates, loss reasons and the Actions that follow), sign in, save the setup and upload what you already ran:
 
 ```sh
@@ -20,7 +22,7 @@ npx @devtune/agentpicks push
 npx @devtune/agentpicks upload ./agentpicks-runs
 ```
 
-A kept run uploads once its setup is pushed with the same `from`, add request and tools the run tested. See [Upload](#upload).
+A kept run uploads once its setup is pushed with the same `from`, add request and tools the run tested. See [Upload](#upload). No DevTune account yet? [Sign up](https://devtune.ai/auth/sign-up) and create a project, or have your coding agent [set one up](https://docs.devtune.ai/getting-started/agent-setup).
 
 ## Requirements
 
@@ -46,7 +48,7 @@ agentpicks run --category error-tracking --repo .
 | `--agent` | `claude-code`, `codex`, `opencode` or `pi`. Required when several are installed. |
 | `--model` | The model to ask for. OpenCode and Pi take `anthropic/<model>` or `openai/<model>`. |
 | `--out` | Where bundles go. Default `./agentpicks-runs`. |
-| `--no-upload` | Keep bundles on this machine only. Send them later with `agentpicks upload`; a custom setup's once `agentpicks push` saves it (see [Setups](#setups)). |
+| `--no-upload` | Keep bundles on this machine only. Send them later with `agentpicks upload`; a custom setup's once `agentpicks push` saves it (see [Setups](#setups)). `AGENTPICKS_NO_UPLOAD`, set to anything, does the same for every run. |
 
 `agentpicks --help`, or `--help` after any command, prints the usage and exits successfully.
 
@@ -113,7 +115,7 @@ Either login is saved to `agentpicks/credentials.json` under `$XDG_CONFIG_HOME`,
 
 In CI, set `DEVTUNE_API_KEY` and `DEVTUNE_PROJECT_ID` instead: they override the saved login. Without `DEVTUNE_API_KEY`, a saved sign-in is used only for its own API address and project. `DEVTUNE_API_BASE_URL` sets the API address, default `https://devtune.ai/api/v2`. These are the names the `devtune` CLI reads.
 
-`run` checks for a sign-in or key before anything starts, and refuses without one. Once a run's bundle is written, `run` lists its files, their sizes and the redactions, then uploads it: the manifest to DevTune, and each artifact straight to storage. It prints the run id and the upload's API address. If DevTune refuses the upload, `run` prints DevTune's reason and the command that sends the bundle later, and starts no further runs. The bundle stays on disk either way.
+`run` checks for a sign-in or key before anything starts, and refuses without one unless you pass `--no-upload` or set `AGENTPICKS_NO_UPLOAD`. Once a run's bundle is written, `run` lists its files, their sizes and the redactions, then uploads it: the manifest to DevTune, and each artifact straight to storage. It prints the run id and the upload's API address. If DevTune refuses the upload, `run` prints DevTune's reason and the command that sends the bundle later, and starts no further runs. The bundle stays on disk either way.
 
 A `--repo` run needs the repository to have a remote that `agentpicks` records (see [The bundle](#the-bundle)), since DevTune groups a repository's runs by its remote. Without one, `run` refuses before anything starts; add an `origin` remote, or pass `--no-upload`.
 
@@ -157,6 +159,7 @@ agentpicks init --yes
 `agentpicks init` writes a setup file from a few questions. Each shows its default in brackets, and Enter takes it:
 
 - **Job**: a built-in category, which the file inherits with `from:`, or a job line of your own. The default is the category of your tool.
+- **Requests**, for a job of your own: the add request a run asks, the recommend request `push` saves with it, and a hosted request or none.
 - **Your tool**: a catalogue tool named by your `package.json` name or scope, or your git remote's repository or owner, such as `sentry` from `getsentry/sentry-docs`.
 - **Competitors**: for a category, its tools; for your own job, typed as npm packages.
 - **Where to test**: `repo: .` in a git repository, else the stacks your `package.json` and lockfiles name (`next`, `@tanstack/react-start`, `@sveltejs/kit` and `express`, a pnpm monorepo's apps included, plus FastAPI and Rails).
@@ -219,7 +222,7 @@ runs: 3
 | `id` | The DevTune setup the file is linked to. `pull` and `push` write it. |
 | `synced` | What the file and its DevTune setup held when they last matched: `setup`, the setup's digest, and `file`, the file's. `pull` and `push` write it; don't edit it. |
 
-`schema/setup.v1.json` in this package is the file's JSON Schema. An editor with YAML support completes and checks a setup file against it, for example with a first line `# yaml-language-server: $schema=<path or URL of setup.v1.json>`.
+`agentpicks schema` prints the file's JSON Schema. It is `schema/setup.v1.json` in this package, and each version's is at `https://raw.githubusercontent.com/devtunehq/agentpicks/v<version>/schema/setup.v1.json`. `init` and `pull` start a file with `# yaml-language-server: $schema=<that address>`, so an editor with YAML support completes and checks it. To have a coding agent write a setup, give it the schema and this section, and have it run `agentpicks validate` until the file passes.
 
 ```sh
 agentpicks run feature-flags --no-upload
@@ -278,7 +281,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: npm install -g @anthropic-ai/claude-code@2.1.323
-      - uses: devtunehq/agentpicks@v0.4.4
+      - uses: devtunehq/agentpicks@v0.4.5
         with:
           setup: agentpicks/error-tracking.yaml
           agent: claude-code
@@ -292,7 +295,7 @@ jobs:
 
 Use a Linux runner: `ubuntu-latest` has Docker and Node.js 20 or later. Without Docker, `run` refuses; without Node.js 20 or later, the action does. The action uses the runner's Node.js and doesn't change it for later steps.
 
-Pin a release tag, such as `v0.4.4`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
+Pin a release tag, such as `v0.4.5`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
 
 | Input | Passed as |
 |---|---|
@@ -333,7 +336,7 @@ Install Docker, Node.js 20 or later and the agent, set `DEVTUNE_API_KEY`, `DEVTU
 
 ```sh
 npm install -g @anthropic-ai/claude-code@2.1.323
-npx --yes @devtune/agentpicks@0.4.4 run error-tracking --agent claude-code
+npx --yes @devtune/agentpicks@0.4.5 run error-tracking --agent claude-code
 ```
 
 ## The bundle
