@@ -19,10 +19,10 @@ import {
 import { CATEGORY_TOOLS } from '../catalogue/category-tools.generated';
 import type { EarlyStopPatterns } from '../catalogue/early-stop';
 import {
-  ENVIRONMENTS,
   environmentRunsIn,
   findEnvironment,
   isRetiredEnvironment,
+  setupEnvironments,
   type EnvironmentDefinition,
 } from '../catalogue/environments';
 import { PROMPT_INTENTS } from '../catalogue/prompt-intents';
@@ -376,10 +376,7 @@ function editedReason(
 }
 
 function stackChoices(runsIn: string): string {
-  return ENVIRONMENTS.filter(
-    (env) =>
-      !isRetiredEnvironment(env.slug) && environmentRunsIn(env.slug, runsIn),
-  )
+  return setupEnvironments(runsIn)
     .map((env) => env.slug)
     .join(', ');
 }

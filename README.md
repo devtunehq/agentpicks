@@ -154,9 +154,10 @@ A setup is what you test, kept as a YAML file in your repository: one file per s
 ```sh
 agentpicks init
 agentpicks init --yes
+agentpicks init --category authentication --tool clerk --competitors authjs,okta --stack nextjs --agent claude-code --name auth --yes
 ```
 
-`agentpicks init` writes a setup file from a few questions. Each shows its default in brackets, and Enter takes it:
+`agentpicks init` writes a setup file from a few questions. Each shows its default in brackets, and Enter takes it. Categories, a category's tools and stacks are listed numbered: answer with a number or a key, and give competitors and stacks as a comma list that may hold ranges, such as `2, 5-8`.
 
 - **Job**: a built-in category, which the file inherits with `from:`, or a job line of your own. The default is the category of your tool.
 - **Requests**, for a job of your own: the add request a run asks, the recommend request `push` saves with it, and a hosted request or none.
@@ -168,9 +169,15 @@ agentpicks init --yes
 
 For a custom setup, run `agentpicks push <setup>` before running it with uploads.
 
+Each question also has a flag, which takes keys, never list numbers: `--category <category>` or `--job <line>`, `--tool <tool>` or `none`, `--competitors <tool>,<tool>` or `all`, `--repo .` or `--stack <stack>`, `--agent <agent>` or `any`, `--runs <n>` and `--name <name>`. `--stack` and `--agent` repeat, or take a comma list. `init` asks only what the flags leave, and refuses a flag value that doesn't read, naming the flag. A job line's requests and tools have no flags: answer them on a terminal or, signed in, take DevTune's drafts with `--yes`. Without a sign-in, type them on a terminal, or have your coding agent write the file against `agentpicks schema` and check it with `agentpicks validate`.
+
+`agentpicks catalogue` lists the category, tool and stack keys the flags take: every category and the stacks a job line can run in. `agentpicks catalogue <category>` lists the category's tool keys and the stacks it runs in. `--json` prints either as one JSON object.
+
+After writing a category setup, `init` prints the command that writes the same setup in another repository, such as `To write the same setup in another repository: agentpicks init --category error-tracking --tool sentry --repo . --agent claude-code --name error-tracking --yes`.
+
 Signed in with `agentpicks login`, or with `DEVTUNE_API_KEY` and `DEVTUNE_PROJECT_ID` set, a job of your own is drafted by DevTune: its requests, its competitors, and each tool's packages and config names. Drafts count against your project's hourly draft allowance. If DevTune refuses a draft or can't be reached, `init` prints one warning and asks for the rest itself.
 
-`init` checks the file as `validate` does before writing it; on a terminal it asks again until the file passes. It won't replace a setup of the same name without `--force`. `--yes` takes every default without asking, and fails, naming what it couldn't detect, when there's no default for the job or where to test. Off a terminal, `init` needs `--yes`.
+`init` checks the file as `validate` does before writing it. On a terminal it asks again for a typed answer until the file passes; a flag's value, or a default `--yes` took, that fails is refused instead, naming the problem. It won't replace a setup of the same name without `--force`. `--yes` takes every default without asking, and fails, naming what it couldn't detect, when there's no default for the job or where to test. Off a terminal, a question no flag answers takes its default with `--yes`, where it has one; without `--yes`, `init` stops at it and names its flag. Off a terminal, a job line needs `--yes`.
 
 `agentpicks/error-tracking.yaml` tests the built-in error tracking category:
 
@@ -281,7 +288,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: npm install -g @anthropic-ai/claude-code@2.1.323
-      - uses: devtunehq/agentpicks@v0.4.6
+      - uses: devtunehq/agentpicks@v0.4.7
         with:
           setup: agentpicks/error-tracking.yaml
           agent: claude-code
@@ -295,7 +302,7 @@ jobs:
 
 Use a Linux runner: `ubuntu-latest` has Docker and Node.js 20 or later. Without Docker, `run` refuses; without Node.js 20 or later, the action does. The action uses the runner's Node.js and doesn't change it for later steps.
 
-Pin a release tag, such as `v0.4.6`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
+Pin a release tag, such as `v0.4.7`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
 
 | Input | Passed as |
 |---|---|
@@ -336,7 +343,7 @@ Install Docker, Node.js 20 or later and the agent, set `DEVTUNE_API_KEY`, `DEVTU
 
 ```sh
 npm install -g @anthropic-ai/claude-code@2.1.323
-npx --yes @devtune/agentpicks@0.4.6 run error-tracking --agent claude-code
+npx --yes @devtune/agentpicks@0.4.7 run error-tracking --agent claude-code
 ```
 
 ## The bundle

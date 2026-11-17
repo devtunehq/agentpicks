@@ -1,5 +1,6 @@
 /**
- * ABOUTME: The `agentpicks` command. `init` writes a setup file from a wizard; `run` tests a coding agent installed on this machine against
+ * ABOUTME: The `agentpicks` command. `init` writes a setup file from a wizard or its flags, whose keys
+ * `catalogue` lists; `run` tests a coding agent installed on this machine against
  * a committed starter, or the customer's own repository at one commit, in fresh Docker containers, one run after another, and writes a bundle per
  * completed run, which it uploads to the customer's DevTune project unless --no-upload; `upload`
  * sends bundles written earlier; `login` signs in through the browser, or saves a project API key,
@@ -38,6 +39,7 @@ import {
   type RunPlan,
 } from './args';
 import { CUSTOM_SETUP_CATEGORY_PREFIX } from './bundle';
+import { catalogueCommand } from './catalogue-command';
 import { categoryCopyPlan } from './category-copy';
 import { resolveCredentials } from './credentials';
 import {
@@ -98,7 +100,10 @@ export const RUNNER = {
 } as const;
 
 export const USAGE = `Usage:
-  agentpicks init [--yes] [--force]
+  agentpicks init [--yes] [--force] [--category <category> | --job <line>] [--tool <tool>|none]
+                  [--competitors <tool>,...|all] [--repo . | --stack <stack>...]
+                  [--agent <agent>...|any] [--runs <n>] [--name <name>]
+  agentpicks catalogue [<category>] [--json]
   agentpicks run [<setup>] [--stack <stack> | --repo <path> [--ref <commit>]]
                  [--runs <n>] [--agent claude-code|codex|opencode|pi] [--model <model>]
                  [--out <dir>] [--no-upload]
@@ -120,6 +125,22 @@ export const USAGE = `Usage:
 init      Writes a setup file, agentpicks/<name>.yaml, from questions whose defaults come from
           this repository. --yes takes every default without asking. --force replaces a setup
           of the same name. Signed in, DevTune drafts the requests and tools of your own job.
+          Each flag answers one question: --category or --job, --tool, --competitors,
+          --repo . or --stack, --agent, --runs and --name. Flags take keys, never list numbers;
+          --stack and --agent repeat or take a comma list. A question a flag answers isn't
+          asked. A flag value that doesn't read stops init before it asks anything, unless the
+          check needs an earlier answer, such as --competitors against the tool this
+          repository names, which waits for that question. Off a terminal, a question no flag
+          answers takes its default with --yes, where it has one; without --yes, init stops at
+          it and names its flag. A job line's requests and tools
+          have no flags: answer them on a terminal or, signed in, take DevTune's drafts with
+          --yes; off a terminal a job line needs --yes. For a category setup, init ends with
+          the agentpicks init command that writes the same setup in another repository.
+          Typed answers take list numbers or keys; the competitors and stacks answers also
+          take ranges such as 2-4.
+catalogue Lists the category, tool and stack keys init's flags take: every category and the
+          stacks a job line can run in, or with <category>, its tool keys and stacks. --json
+          prints one JSON object.
 run       Tests the coding agent installed here in a fresh Docker container per run, writes
           one bundle per completed run to --out (default ./agentpicks-runs), and uploads it to
           your DevTune project. --no-upload keeps bundles on this machine only, as every run
@@ -178,11 +199,12 @@ describes every field.
  */
 export const INTRO = `Test which tools coding agents pick when they build your kind of app.
 
-  agentpicks init      Write a setup file for this repository
-  agentpicks run       Run a setup with the coding agent installed here
-  agentpicks results   Show which tool each run picked
-  agentpicks list      List this repository's setups and your project's
-  agentpicks login     Sign in to DevTune to upload runs for its analysis
+  agentpicks init       Write a setup file for this repository
+  agentpicks catalogue  List the categories, tools and stacks init takes by key
+  agentpicks run        Run a setup with the coding agent installed here
+  agentpicks results    Show which tool each run picked
+  agentpicks list       List this repository's setups and your project's
+  agentpicks login      Sign in to DevTune to upload runs for its analysis
 
 Runs need no DevTune account: pass --no-upload to run, or set AGENTPICKS_NO_UPLOAD=1, and
 bundles stay on this machine. To upload them later, sign up at ${signUpUrl()}
@@ -298,6 +320,7 @@ export async function main(argv: string[], given: CliContext): Promise<number> {
     if (command === 'validate') return validateCommand(rest, ctx);
     if (command === 'schema') return schemaCommand(rest, ctx);
     if (command === 'results') return resultsCommand(rest, ctx);
+    if (command === 'catalogue') return catalogueCommand(rest, ctx);
     ctx.err(`agentpicks has no ${command} command.\n\n${USAGE}`);
     return 1;
   } catch (error) {

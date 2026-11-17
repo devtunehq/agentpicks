@@ -546,6 +546,18 @@ export function environmentRunsIn(slug: string, categorySlug: string): boolean {
 }
 
 /**
+ * The stacks a setup of `runsIn` may name: a category slug, or `job-` for a job line of its own.
+ * Every environment that runs in it, retired ones left out. `init` offers these, `agentpicks
+ * catalogue` lists them, and a setup naming another is refused with them.
+ */
+export function setupEnvironments(runsIn: string): EnvironmentDefinition[] {
+  return ENVIRONMENTS.filter(
+    (env) =>
+      !isRetiredEnvironment(env.slug) && environmentRunsIn(env.slug, runsIn),
+  );
+}
+
+/**
  * Whether the environment `slug` runs in some categories only, or in no job (a context), so it
  * is not offered for every category and job.
  */
