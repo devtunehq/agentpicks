@@ -14,10 +14,12 @@ const idSlug = z.object({ id: z.string(), slug: z.string() });
 
 const devtuneSetupSchema = z.object({
   id: z.string(),
+  category_id: z.string().optional(),
   category_slug: z.string(),
   name: z.string(),
   kind: z.enum(['job', 'copy', 'category']),
   source_category_slug: z.string().nullable(),
+  source_category_id: z.string().nullable().optional(),
   snapshot_digest: z.string(),
   requests: z.record(z.string(), z.string().nullable()),
   tools: z.array(

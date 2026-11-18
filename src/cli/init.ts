@@ -31,8 +31,7 @@ import {
 } from '../catalogue/categories';
 import { CATEGORY_TOOLS } from '../catalogue/category-tools.generated';
 import {
-  findEnvironment,
-  isRetiredEnvironment,
+  activeEnvironments,
   setupEnvironments,
 } from '../catalogue/environments';
 import { checkSetupText, SETUPS_DIR } from '../setup/files';
@@ -93,8 +92,9 @@ export async function initCommand(
   let file: SetupFile;
   if ('category' in job) file = await askCategoryTools(wizard, job.category);
   else if (flags.tool !== undefined || flags.competitors !== undefined)
-    throw new UsageError(
-      `--${flags.tool !== undefined ? 'tool' : 'competitors'} answers a category's questions, and ${job.line} is a job line. Pass --category, or leave it out.`,
+    throw jobLineFlagError(
+      flags.tool !== undefined ? '--tool' : '--competitors',
+      job.line,
     );
   else if (!yes && !wizard.interactive)
     // Refused before drafting, which counts against the project's hourly draft allowance.
@@ -242,6 +242,13 @@ function parseInitArgs(argv: string[]) {
   return values;
 }
 
+/** The refusal shared by an explicit job line and one typed at the prompt. */
+function jobLineFlagError(flag: '--tool' | '--competitors', line: string) {
+  return new UsageError(
+    `${flag} answers a category's questions, and ${line} is a job line. Pass --category, or leave it out.`,
+  );
+}
+
 /**
  * Refuses, before anything is listed, asked or drafted, a flag whose value doesn't read. Each
  * question's own read checks it. Without the job, --tool, --competitors and --stack are checked
@@ -265,21 +272,23 @@ function checkFlags(wizard: Wizard) {
       ['--tool', tool],
       ['--competitors', competitors],
     ] as const)
-      if (value !== undefined)
+      if (value !== undefined) {
+        if (job && 'line' in job) throw jobLineFlagError(flag, job.line);
         refuseListNumbers(flag, value, 'agentpicks catalogue <category>');
+      }
   if (job && stack.length > 0)
     read(testsQuestion(wizard, 'category' in job ? job.category : undefined));
   else if (stack.length > 0) {
     const given = stack.join(',');
-    refuseListNumbers('--stack', given, 'agentpicks catalogue');
+    const choices = activeEnvironments().map((env) => env.slug);
+    const keys = `${choices.join(', ')}, or all`;
+    refuseListNumbers('--stack', given, keys);
     const unknown = entries(given).find(
-      (slug) =>
-        slug !== 'all' &&
-        (!findEnvironment(slug) || isRetiredEnvironment(slug)),
+      (slug) => slug !== 'all' && !choices.includes(slug),
     );
     if (unknown !== undefined)
       throw new UsageError(
-        `--stack: ${unknown} isn't a stack. Give stack slugs, or all. List the keys with: agentpicks catalogue`,
+        `--stack: ${unknown} isn't a stack. Give one of: ${keys}.`,
       );
   }
   read(agentsQuestion(wizard));
@@ -469,7 +478,7 @@ function toolDefault(wizard: Wizard, category: string): string {
 
 /**
  * Where a run tests: the repository (`repo: .`, answered `repo` or `.`), every stack the job runs in
- * (`all`), or stacks by number, range or slug. The default is the repository in a git repository,
+ * (`all`), or stacks by number, range or slug. The default is the repository when it has a commit,
  * else the stacks detected.
  */
 async function askTests(
@@ -493,18 +502,18 @@ function testsQuestion(
   from: string | undefined,
 ): Question<Pick<SetupFile, 'repo' | 'stacks'>> {
   const choices = setupEnvironments(from ?? 'job-').map((env) => env.slug);
-  const { git, stacks, root } = wizard.detected;
+  const { hasCommit, stacks, root } = wizard.detected;
   const detected = stacks.filter((stack) => choices.includes(stack));
   const { repo, stack } = wizard.flags;
   return {
     label:
       'Where to test: this repository (repo), all stacks (all), or stack numbers or ranges separated by commas (1, 3-4)',
-    fallback: git ? 'repo' : detected.join(', ') || null,
-    missing: `found nothing to test in: ${root} isn't a git repository, and its package.json and lockfiles name no framework of a stack (${choices.join(', ')}). Run it in a git repository, or on a terminal to choose stacks.`,
+    fallback: hasCommit ? 'repo' : detected.join(', ') || null,
+    missing: `found nothing to test in ${root}: agentpicks couldn't confirm a commit there, and no package.json or lockfile there names a framework of a stack (${choices.join(', ')}). Run it on a terminal to choose stacks.`,
     flag:
       repo !== undefined
         ? '--repo'
-        : stack.length > 0 || !git
+        : stack.length > 0 || !hasCommit
           ? '--stack'
           : '--repo . or --stack',
     given: repo ?? (stack.length > 0 ? stack.join(',') : undefined),

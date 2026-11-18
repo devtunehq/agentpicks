@@ -23,7 +23,10 @@ import { parse } from 'yaml';
 
 import { CATEGORY_REQUESTS } from '../catalogue/categories';
 import { CATEGORY_TOOLS } from '../catalogue/category-tools.generated';
-import { setupEnvironments } from '../catalogue/environments';
+import {
+  activeEnvironments,
+  setupEnvironments,
+} from '../catalogue/environments';
 import { readSetupFile } from '../setup/files';
 import { SETUP_MAX_COMPETITORS } from '../setup/rules';
 import { categoryPlan, parseRunArgs, setupPlan, type RunPlan } from './args';
@@ -36,6 +39,9 @@ import { SCHEMA_LINE } from './setup-write';
 
 const ANTHROPIC_KEY = 'sk-ant-api03-secret-value-000000';
 const DRAFTS = `${TARGET.baseUrl}/projects/${TARGET.projectId}/agent-picks`;
+const STACK_KEYS = activeEnvironments()
+  .map((env) => env.slug)
+  .join(', ');
 
 /** Claude Code installed and signed in; Codex installed without a key, so not signed in. */
 const MACHINE = () =>
@@ -78,14 +84,28 @@ function git(...args: string[]) {
   expect(r.status, r.stderr).toBe(0);
 }
 
-/** A Next.js app in a git repository whose remote names the error-tracking tool sentry. */
-function nextApp() {
+/** A Next.js app in a git repository, committed unless `commit` is false, whose remote names the error-tracking tool sentry. */
+function nextApp({ commit = true } = {}) {
   write(
     'package.json',
     JSON.stringify({ name: 'docs-site', dependencies: { next: '16.0.0' } }),
   );
   git('init', '-q');
   git('remote', 'add', 'origin', 'git@github.com:getsentry/sentry-docs.git');
+  if (commit)
+    git(
+      '-c',
+      'user.name=init spec',
+      '-c',
+      'user.email=init-spec@example.com',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-q',
+      '--allow-empty',
+      '-m',
+      'first',
+    );
 }
 
 function context(io: HostIo, answers: string[] | null) {
@@ -129,6 +149,7 @@ describe('detection', () => {
     expect(detectRepository(join(dir), MACHINE())).toEqual({
       root: dir,
       git: true,
+      hasCommit: true,
       stacks: ['nextjs'],
       stackSources: ['package.json'],
       packageName: 'docs-site',
@@ -197,6 +218,7 @@ describe('detection', () => {
     expect(detectRepository(dir, fakeHost())).toEqual({
       root: dir,
       git: false,
+      hasCommit: false,
       stacks: [],
       stackSources: [],
       packageName: null,
@@ -207,6 +229,36 @@ describe('detection', () => {
 });
 
 describe('agentpicks init --yes', () => {
+  it.each([false, true])(
+    'defaults to repo only when HEAD resolves to a commit (hasCommit: %s)',
+    async (hasCommit) => {
+      nextApp({ commit: hasCommit });
+      const { ctx, errors, questions } = context(fakeHost(), null);
+      expect(await main(['init', '--yes'], ctx), errors.join('\n')).toBe(0);
+      expect(questions).toEqual([]);
+      expect(setup('error-tracking')).toEqual({
+        from: 'error-tracking',
+        tools: { own: 'sentry' },
+        ...(hasCommit ? { repo: '.' } : { stacks: ['nextjs'] }),
+      });
+      await validates('error-tracking');
+    },
+  );
+
+  it('refuses an uncommitted repository with no detected stack instead of defaulting to repo', async () => {
+    write('package.json', JSON.stringify({ name: 'stripe-notes' }));
+    git('init', '-q');
+    const { ctx, errors } = context(fakeHost(), null);
+    expect(await main(['init', '--yes'], ctx)).toBe(1);
+    const stacks = setupEnvironments('payments')
+      .map((env) => env.slug)
+      .join(', ');
+    expect(errors).toEqual([
+      `agentpicks init --yes found nothing to test in ${dir}: agentpicks couldn't confirm a commit there, and no package.json or lockfile there names a framework of a stack (${stacks}). Run it on a terminal to choose stacks.`,
+    ]);
+    expect(() => setupText('payments')).toThrow();
+  });
+
   it('writes a Next.js repository a file validate passes: its category, its tool, repo . and the agents signed in', async () => {
     nextApp();
     const { ctx, lines, questions } = context(MACHINE(), null);
@@ -297,7 +349,7 @@ describe('agentpicks init --yes', () => {
     const noTest = context(fakeHost(), null);
     expect(await main(['init', '--yes'], noTest.ctx)).toBe(1);
     expect(noTest.errors[0]).toMatch(
-      /^agentpicks init --yes found nothing to test in: .* isn't a git repository, and its package\.json and lockfiles name no framework of a stack \(.*\)\. Run it in a git repository, or on a terminal to choose stacks\.$/,
+      /^agentpicks init --yes found nothing to test in .*: agentpicks couldn't confirm a commit there, and no package\.json or lockfile there names a framework of a stack \(.*\)\. Run it on a terminal to choose stacks\.$/,
     );
     expect(() =>
       readFileSync(join(dir, 'agentpicks', 'payments.yaml')),
@@ -989,7 +1041,7 @@ describe('agentpicks init flags', () => {
       ),
     ).toBe(1);
     expect(noTest.errors[0]).toMatch(
-      /^agentpicks init can't ask "Where to test: this repository \(repo\), all stacks \(all\), or stack .*" without a terminal, and found nothing to test in: .* Run it in a git repository, or on a terminal to choose stacks\. Or pass --stack\.$/,
+      /^agentpicks init can't ask "Where to test: this repository \(repo\), all stacks \(all\), or stack .*" without a terminal, and found nothing to test in .* Run it on a terminal to choose stacks\. Or pass --stack\.$/,
     );
   });
 
@@ -1204,13 +1256,22 @@ describe('agentpicks init flags', () => {
     },
     {
       argv: ['--stack', '1'],
-      error:
-        '--stack takes keys, not list numbers such as 1. Give them from: agentpicks catalogue',
+      error: `--stack takes keys, not list numbers such as 1. Give them from: ${STACK_KEYS}, or all`,
     },
     {
       argv: ['--stack', 'svelte'],
+      error: `--stack: svelte isn't a stack. Give one of: ${STACK_KEYS}, or all.`,
+    },
+    ...['--tool', '--competitors'].flatMap((flag) =>
+      ['3', '2,4', '2-4'].map((value) => ({
+        argv: ['--job', 'Add payments', flag, value],
+        error: `${flag} answers a category's questions, and Add payments is a job line. Pass --category, or leave it out.`,
+      })),
+    ),
+    {
+      argv: ['--job', 'Add payments', '--tool', 'stripe'],
       error:
-        "--stack: svelte isn't a stack. Give stack slugs, or all. List the keys with: agentpicks catalogue",
+        "--tool answers a category's questions, and Add payments is a job line. Pass --category, or leave it out.",
     },
     {
       argv: ['--tool', '3'],
@@ -1236,6 +1297,36 @@ describe('agentpicks init flags', () => {
       }
     },
   );
+
+  it('accepts every listed stack before choosing a category, including category-only stacks', async () => {
+    for (const env of activeEnvironments()) {
+      const category = env.categories?.[0] ?? 'payments';
+      const { ctx, errors, questions } = context(MACHINE(), [category]);
+      expect(
+        await main(
+          [
+            'init',
+            '--stack',
+            env.slug,
+            '--tool',
+            'none',
+            '--competitors',
+            'all',
+            '--agent',
+            'any',
+            '--runs',
+            '1',
+            '--name',
+            env.slug,
+          ],
+          ctx,
+        ),
+        errors.join('\n'),
+      ).toBe(0);
+      expect(questions).toHaveLength(1);
+      expect(setup(env.slug).stacks).toEqual([env.slug]);
+    }
+  });
 
   it('says what a competitor that is the tool this repository names needs', async () => {
     write(
@@ -1304,12 +1395,15 @@ describe('agentpicks init flags', () => {
     expect(lines).not.toContain('Press Enter to take the default in brackets.');
   });
 
-  it('refuses --tool after a job line typed on a terminal', async () => {
+  it.each([
+    ['--tool', 'stripe'],
+    ['--competitors', 'paddle'],
+  ])('refuses %s after a job line typed on a terminal', async (flag, value) => {
     nextApp();
     const { ctx, errors } = context(MACHINE(), ['Add payments to this app']);
-    expect(await main(['init', '--tool', 'stripe'], ctx)).toBe(1);
+    expect(await main(['init', flag, value], ctx)).toBe(1);
     expect(errors).toEqual([
-      "--tool answers a category's questions, and Add payments to this app is a job line. Pass --category, or leave it out.",
+      `${flag} answers a category's questions, and Add payments to this app is a job line. Pass --category, or leave it out.`,
     ]);
   });
 

@@ -38,6 +38,11 @@ export class AgentModelError extends Error {
   override readonly name = 'AgentModelError';
 }
 
+/** A carried model endpoint cannot be used from inside the sandbox. */
+export class AgentEndpointError extends Error {
+  override readonly name = 'AgentEndpointError';
+}
+
 /** The agent's sign-in is held where agentpicks never reads it: the macOS Keychain or a system keyring. */
 export class KeychainLoginError extends Error {
   override readonly name = 'KeychainLoginError';

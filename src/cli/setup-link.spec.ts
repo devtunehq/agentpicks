@@ -733,6 +733,133 @@ describe('agentpicks list', () => {
 });
 
 describe('agentpicks push', () => {
+  it.each([
+    {
+      edit: 'request',
+      before: 'hosted: null',
+      after:
+        'add: Add error tracking to this app and its workers.\n  hosted: null',
+      route: SETUPS,
+    },
+    {
+      edit: 'tool selection',
+      before: '- sentry\n',
+      after: '',
+      route: SETUPS,
+    },
+    {
+      edit: 'tool signals',
+      before: 'ACME_ERRORS_KEY',
+      after: 'ACME_ERRORS_TOKEN',
+      route: JOB,
+    },
+    {
+      edit: 'added customer tool',
+      before: '- rollbar',
+      after:
+        '- {key: acme-monitor, name: Acme Monitor, signals: {packages: {npm: [acme-monitor]}}}',
+      route: JOB,
+    },
+    {
+      edit: 'held tool absent from the bundled catalogue',
+      before: '- rollbar',
+      after: '- retired-errors',
+      route: SETUPS,
+    },
+  ])(
+    'pushes a linked copy after its board is unpublished: $edit',
+    async ({ before, after, route }) => {
+      const categoryId = 'c0000000-0000-4000-8000-000000000002';
+      const sourceId = 'c0000000-0000-4000-8000-000000000001';
+      const copy = {
+        ...ownToolCopy(),
+        category_id: categoryId,
+        source_category_id: sourceId,
+        tools: [
+          ...ownToolCopy().tools,
+          {
+            tool_key: 'retired-errors',
+            display_name: 'Retired Errors',
+            brand_domain: null,
+            signals: null,
+          },
+        ],
+      };
+      await pulled([copy]);
+      const path = setupPath('error-tracking-setup');
+      const original = readFileSync(path, 'utf8');
+      expect(original).toContain(before);
+      writeFileSync(path, original.replace(before, after));
+      const unpublished = setupList([copy]);
+      unpublished.body.data.catalogue.categories = [];
+      const calls = stubFetch({
+        [`GET ${SETUPS}`]: [unpublished],
+        [`PUT ${route}`]: [savedSetup(COPY_ID, 'error-tracking-copy', D('e'))],
+      });
+      const push = context();
+      expect(
+        await main(['push', 'error-tracking-setup'], push.ctx),
+        push.errors.join('\n'),
+      ).toBe(0);
+      expect(push.errors).toEqual([]);
+      expect(calls.map((call) => `${call.method} ${call.url}`)).toEqual([
+        `GET ${SETUPS}`,
+        `PUT ${route}`,
+      ]);
+      expect(JSON.parse(calls.at(-1)!.body!)).toMatchObject({
+        [route === SETUPS ? 'category_id' : 'source_category_id']:
+          route === SETUPS ? categoryId : sourceId,
+        setup: COPY_ID,
+        snapshot_digest: D('b'),
+      });
+      expect(readYaml('error-tracking-setup').synced).toEqual({
+        setup: D('e'),
+        file: fileDigest(readYaml('error-tracking-setup')),
+      });
+    },
+  );
+
+  it('still refuses a new category file when its board is unpublished', async () => {
+    writeFileSync(
+      setupPath('errors'),
+      'from: error-tracking\nstacks: [nextjs]\nagents: [codex]\n',
+    );
+    const unpublished = setupList([]);
+    unpublished.body.data.catalogue.categories = [];
+    const calls = stubFetch({ [`GET ${SETUPS}`]: [unpublished] });
+    const push = context();
+    expect(await main(['push', 'errors'], push.ctx)).toBe(1);
+    expect(push.errors).toEqual([
+      'agentpicks/errors.yaml: DevTune has no published category error-tracking. Choose another from:, or update agentpicks.',
+    ]);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('adds a bundled category tool that the linked copy does not hold through the job route', async () => {
+    await pulled([ownToolCopy()]);
+    const path = setupPath('error-tracking-setup');
+    writeFileSync(
+      path,
+      readFileSync(path, 'utf8').replace('- rollbar', '- bugsnag'),
+    );
+    const calls = stubFetch({
+      [`GET ${SETUPS}`]: [setupList([ownToolCopy()])],
+      [`PUT ${JOB}`]: [savedSetup(COPY_ID, 'error-tracking-copy', D('e'))],
+    });
+    const push = context();
+    expect(
+      await main(['push', 'error-tracking-setup'], push.ctx),
+      push.errors.join('\n'),
+    ).toBe(0);
+    expect(calls.at(-1)!.url).toBe(JOB);
+    expect(JSON.parse(calls.at(-1)!.body!)).toMatchObject({
+      setup: COPY_ID,
+      source_category_id: 'c0000000-0000-4000-8000-000000000001',
+      competitor_tool_keys: ['sentry', 'bugsnag'],
+      tools: expect.arrayContaining([{ tool_key: 'bugsnag' }]),
+    });
+  });
+
   it('sends nothing for a file in sync, and saves a local change with the digest it saw, then records the new one', async () => {
     await pulled([jobSetup()]);
     stubFetch({ [`GET ${SETUPS}`]: [setupList([jobSetup()])] });

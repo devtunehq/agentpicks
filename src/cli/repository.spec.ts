@@ -42,6 +42,7 @@ import {
   detectInstall,
   hostGitEnv,
   readRepository,
+  repositoryHasCommit,
   sanitizeRemoteUrl,
 } from './repository';
 
@@ -183,6 +184,27 @@ describe('readRepository', () => {
     git('init', '-q');
     expect(() => readRepository(dir)).toThrow(UnknownCommitError);
     expect(() => readRepository(dir)).toThrow(/has no commit yet/);
+  });
+
+  it('defaults to repo only after HEAD resolves to the first commit', () => {
+    git('init', '-q');
+    expect(repositoryHasCommit(dir)).toBe(false);
+    write('README.md', '# app\n');
+    git('add', 'README.md');
+    git('commit', '-qm', 'first');
+    expect(repositoryHasCommit(dir)).toBe(true);
+  });
+
+  it('does not default to repo when git is missing', () => {
+    committedRepo();
+    vi.stubEnv('PATH', dir);
+    expect(repositoryHasCommit(dir)).toBe(false);
+  });
+
+  it('does not default to repo when the repository config cannot be read', () => {
+    committedRepo();
+    write('.git/config', '[unterminated');
+    expect(repositoryHasCommit(dir)).toBe(false);
   });
 
   it('tests a detached HEAD that has a commit', () => {

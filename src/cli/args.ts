@@ -15,7 +15,7 @@ import {
   type CategoryRequests,
 } from '../catalogue/categories';
 import {
-  ENVIRONMENTS,
+  activeEnvironments,
   environmentRunsIn,
   findEnvironment,
   isRetiredEnvironment,
@@ -433,13 +433,12 @@ function categoryList(): string {
 }
 
 function stackList(categorySlug: string): string {
-  return ENVIRONMENTS.filter(
-    (env) =>
-      !isRetiredEnvironment(env.slug) &&
-      (findCategoryRequests(categorySlug) || categorySlug === 'job-'
+  return activeEnvironments()
+    .filter((env) =>
+      findCategoryRequests(categorySlug) || categorySlug === 'job-'
         ? environmentRunsIn(env.slug, categorySlug)
-        : !env.categories),
-  )
+        : !env.categories,
+    )
     .map((env) => env.slug)
     .join(', ');
 }

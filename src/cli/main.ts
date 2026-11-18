@@ -689,6 +689,7 @@ export function describeOutcome(
   if (!bundle)
     return [
       `  Failed at ${run.failedStage ?? 'an unknown stage'} after ${seconds} s: ${run.error ?? 'no error recorded'}`,
+      ...outcome.agentError,
       '  No bundle was written for this run.',
     ];
   const meta = parseJsonObject(run.artifacts['meta.json']);

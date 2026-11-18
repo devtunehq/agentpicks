@@ -9,9 +9,11 @@
 import { join } from 'node:path';
 
 import { SANDBOX_LIFETIME_MIN } from '../run/limits';
+import { createTraceRedactor } from '../run/trace-redaction';
 import type { AgentPlan } from './agent-plan';
 import { claudeConfigDir, codexHome, topLevelTomlString } from './discover';
 import {
+  AgentEndpointError,
   KeychainLoginError,
   LoginExpiringError,
   MissingCredentialsError,
@@ -31,6 +33,8 @@ export interface AgentCredentials {
   /** Passed to the agent's command only, by name; values never appear in a process listing. */
   env: Record<string, string>;
   files: CredentialFile[];
+  /** Model endpoints carried from host configuration, checked from inside each sandbox. */
+  endpoints: { name: string; url: string; source: string }[];
   /** Every credential value, for redaction. */
   secrets: string[];
   /** What is passed and copied, printed before the first run. */
@@ -66,6 +70,7 @@ export function resolveCredentials(
   return {
     env: { [key]: value },
     files: [],
+    endpoints: [],
     secrets: [value],
     summary: [passes([key], 'your environment', agent.name)],
   };
@@ -88,10 +93,14 @@ function claudeCredentials(io: HostIo): AgentCredentials {
   const keys = CLAUDE_KEYS.map(read).filter((k) => k !== null);
   if (keys.length > 0) {
     const baseUrl = read('ANTHROPIC_BASE_URL');
+    if (baseUrl) assertSandboxEndpoint(baseUrl);
     const passed = baseUrl ? [...keys, baseUrl] : keys;
     return {
       env: Object.fromEntries(passed.map((k) => [k.key, k.value])),
       files: [],
+      endpoints: baseUrl
+        ? [{ name: baseUrl.key, url: baseUrl.value, source: baseUrl.source }]
+        : [],
       secrets: keys.map((k) => k.value),
       summary: [...new Set(passed.map((k) => k.source))].map((source) =>
         passes(
@@ -131,6 +140,7 @@ function claudeCredentials(io: HostIo): AgentCredentials {
           content: JSON.stringify({ claudeAiOauth: copy }),
         },
       ],
+      endpoints: [],
       secrets: [accessToken],
       summary: [copies('Claude Code', path, '/root/.claude/.credentials.json')],
     };
@@ -146,22 +156,34 @@ function claudeCredentials(io: HostIo): AgentCredentials {
 }
 
 function codexCredentials(io: HostIo): AgentCredentials {
+  const home = codexHome(io);
+  const configPath = join(home, 'config.toml');
+  const config = io.readFile(configPath);
+  const provider = topLevelTomlString(config, 'model_provider');
+  const ignored = [
+    ...(io.env.OPENAI_BASE_URL ? ['OPENAI_BASE_URL in your environment'] : []),
+    ...(provider && provider !== 'openai'
+      ? [`model_provider = "${provider}" in ${configPath}`]
+      : []),
+  ];
+  const endpointSummary = ignored.length
+    ? [
+        `Codex talks to OpenAI directly for this run; it doesn't use the endpoint configured by ${ignored.join(' and ')}.`,
+      ]
+    : [];
   const keys = CODEX_KEYS.filter((key) => io.env[key]);
   if (keys.length > 0)
     return {
       env: Object.fromEntries(keys.map((key) => [key, io.env[key]!])),
       files: [],
+      endpoints: [],
       secrets: keys.map((key) => io.env[key]!),
-      summary: [passes(keys, 'your environment', 'Codex')],
+      summary: [passes(keys, 'your environment', 'Codex'), ...endpointSummary],
     };
 
-  const home = codexHome(io);
-  const store = topLevelTomlString(
-    io.readFile(join(home, 'config.toml')),
-    'cli_auth_credentials_store',
-  );
+  const store = topLevelTomlString(config, 'cli_auth_credentials_store');
   const keyring = new KeychainLoginError(
-    `Codex keeps its sign-in in the system keyring (cli_auth_credentials_store = "${store}" in ${join(home, 'config.toml')}), which agentpicks doesn't read. Set OPENAI_API_KEY, or set cli_auth_credentials_store = "file", run \`codex login\` and try again.`,
+    `Codex keeps its sign-in in the system keyring (cli_auth_credentials_store = "${store}" in ${configPath}), which agentpicks doesn't read. Set OPENAI_API_KEY, or set cli_auth_credentials_store = "file", run \`codex login\` and try again.`,
   );
   if (store === 'keyring') throw keyring;
 
@@ -197,19 +219,56 @@ function codexCredentials(io: HostIo): AgentCredentials {
           content: JSON.stringify(copy),
         },
       ],
+      endpoints: [],
       secrets: [
         accessToken,
         stringField(tokens, 'id_token'),
         stringField(tokens, 'refresh_token'),
         apiKey,
       ].filter((v): v is string => Boolean(v)),
-      summary: [copies('Codex', path, '/root/.codex/auth.json')],
+      summary: [
+        copies('Codex', path, '/root/.codex/auth.json'),
+        ...endpointSummary,
+      ],
     };
   }
   if (store === 'auto') throw keyring;
   throw new MissingCredentialsError(
     'Codex has no sign-in on this machine. Run `codex login`, or set OPENAI_API_KEY.',
   );
+}
+
+/** Reject addresses that would point back into the sandbox before building its image. */
+function assertSandboxEndpoint(endpoint: {
+  key: string;
+  value: string;
+  source: string;
+}) {
+  const { key, value, source } = endpoint;
+  const display = createTraceRedactor({}, { names: false })(value);
+  const invalidUrl = new AgentEndpointError(
+    `${key} in ${source} is ${display}, which isn't an http: or https: URL. Set it to an address the sandbox can reach and try again.`,
+  );
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw invalidUrl;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw invalidUrl;
+  const host = url.hostname.replace(/\.$/, '');
+  if (
+    host === 'localhost' ||
+    host.endsWith('.localhost') ||
+    /^127\.\d+\.\d+\.\d+$/.test(host) ||
+    host === '0.0.0.0' ||
+    host === '[::1]' ||
+    host === '[::]' ||
+    /^\[::ffff:(?:7f[0-9a-f]{2}:[0-9a-f]{1,4}|0:0)\]$/.test(host)
+  )
+    throw new AgentEndpointError(
+      `${key} in ${source} is ${display}, which inside the sandbox is the sandbox itself. Set it to an address the sandbox can reach, such as the model server's LAN IP, and try again.`,
+    );
 }
 
 /** The `exp` of a JWT, in milliseconds; null when the token is not a JWT with one. */

@@ -91,6 +91,8 @@ Before the first run, `agentpicks` prints what it passes and copies.
 | Codex | `OPENAI_API_KEY` or `CODEX_API_KEY` | The sign-in in `~/.codex/auth.json` |
 | OpenCode, Pi | `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`, for the model's provider | Nothing |
 
+Set a custom `ANTHROPIC_BASE_URL` to an HTTP or HTTPS address the sandbox can reach. Use an IP address rather than a name only your network resolves; `localhost` points to the sandbox itself.
+
 A copied sign-in leaves out its refresh token, so the container can't renew it and so can't sign this machine out. The access token has to last the run: a sign-in that expires within 40 minutes is refused until you renew it by running the agent here. Copies are deleted with the container.
 
 Claude Code on macOS keeps its sign-in in the Keychain, which `agentpicks` never reads. Run `claude setup-token` and set `CLAUDE_CODE_OAUTH_TOKEN` to the token it prints. Codex set to keep its sign-in in the system keyring is refused the same way; set `OPENAI_API_KEY`.
@@ -163,7 +165,7 @@ agentpicks init --category authentication --tool clerk --competitors authjs,okta
 - **Requests**, for a job of your own: the add request a run asks, the recommend request `push` saves with it, and a hosted request or none.
 - **Your tool**: a catalogue tool named by your `package.json` name or scope, or your git remote's repository or owner, such as `sentry` from `getsentry/sentry-docs`.
 - **Competitors**: for a category, its tools; for your own job, typed as npm packages.
-- **Where to test**: this repository (`repo`, written `repo: .`), every stack the job runs in (`all`), or stacks by number or range. The default is `repo` in a git repository, else the stacks your `package.json` and lockfiles name (`next`, `@tanstack/react-start`, `@sveltejs/kit` and `express`, a pnpm monorepo's apps included, plus FastAPI and Rails).
+- **Where to test**: this repository (`repo`, written `repo: .`), every stack the job runs in (`all`), or stacks by number or range. The default is `repo` in a git repository with at least one commit, else the stacks your `package.json` and lockfiles name (`next`, `@tanstack/react-start`, `@sveltejs/kit` and `express`, a pnpm monorepo's apps included, plus FastAPI and Rails).
 - **Agents**: those installed here that `run` could start now, with their sign-in or key.
 - **Runs** and the setup's **name**.
 
@@ -288,7 +290,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: npm install -g @anthropic-ai/claude-code@2.1.323
-      - uses: devtunehq/agentpicks@v0.4.8
+      - uses: devtunehq/agentpicks@v0.4.9
         with:
           setup: agentpicks/error-tracking.yaml
           agent: claude-code
@@ -302,7 +304,7 @@ jobs:
 
 Use a Linux runner: `ubuntu-latest` has Docker and Node.js 20 or later. Without Docker, `run` refuses; without Node.js 20 or later, the action does. The action uses the runner's Node.js and doesn't change it for later steps.
 
-Pin a release tag, such as `v0.4.8`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
+Pin a release tag, such as `v0.4.9`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
 
 | Input | Passed as |
 |---|---|
@@ -343,7 +345,7 @@ Install Docker, Node.js 20 or later and the agent, set `DEVTUNE_API_KEY`, `DEVTU
 
 ```sh
 npm install -g @anthropic-ai/claude-code@2.1.323
-npx --yes @devtune/agentpicks@0.4.8 run error-tracking --agent claude-code
+npx --yes @devtune/agentpicks@0.4.9 run error-tracking --agent claude-code
 ```
 
 ## The bundle

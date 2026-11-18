@@ -8,7 +8,7 @@
 import { z } from 'zod';
 
 import { CATEGORY_REQUESTS } from '../catalogue/categories';
-import { ENVIRONMENTS, isRetiredEnvironment } from '../catalogue/environments';
+import { activeEnvironments } from '../catalogue/environments';
 import { SELF_RUN_AGENTS } from '../cli/self-run-agents';
 import { toolSignalFields } from './pattern-rules';
 import {
@@ -80,9 +80,10 @@ const toolRef = z.union([toolKeySchema, toolEntrySchema]);
 
 export type SetupToolRef = z.infer<typeof toolRef>;
 
-const stackSlugs = ENVIRONMENTS.map((env) => env.slug).filter(
-  (slug) => !isRetiredEnvironment(slug),
-) as [string, ...string[]];
+const stackSlugs = activeEnvironments().map((env) => env.slug) as [
+  string,
+  ...string[],
+];
 
 const categorySlugs = CATEGORY_REQUESTS.map((c) => c.slug) as [
   string,

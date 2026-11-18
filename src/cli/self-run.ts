@@ -25,6 +25,7 @@ import { createTraceRedactor } from '../run/trace-redaction';
 import type { DockerSandbox } from '../sandbox/docker';
 import type { SandboxPlatform } from '../sandbox/platform';
 import type { Sandbox, SandboxProvider } from '../sandbox/provider';
+import { agentLastWords } from './agent-error';
 import type { AgentPlan } from './agent-plan';
 import type { ResolvedTest } from './args';
 import {
@@ -34,6 +35,7 @@ import {
   type WrittenBundle,
 } from './bundle';
 import type { AgentCredentials } from './credentials';
+import { AgentEndpointError } from './errors';
 import type { RepositorySnapshot } from './repository';
 
 export interface SelfRunInput {
@@ -59,6 +61,8 @@ export interface SelfRunOutcome {
   run: SandboxRunResult;
   /** Written only for a run that completed. */
   bundle: WrittenBundle | null;
+  /** For a run that failed at the agent, why it stopped (`agentLastWords`); empty otherwise. */
+  agentError: string[];
 }
 
 /** Where the egress IP is read from: a single request whose only answer is the caller's address. */
@@ -106,6 +110,34 @@ export async function selfRun(input: SelfRunInput): Promise<SelfRunOutcome> {
     redact: (text, artifact) => (artifact ? text : redactMessage(text)),
     async afterUpload(box) {
       context.egressIp = await readEgressIp(box);
+      for (const endpoint of credentials.endpoints) {
+        const result = await box.exec(
+          `curl --noproxy '*' --globoff --head --silent --show-error --output /dev/null --max-time 10 --url ${shellQuote(new URL(endpoint.url).origin)}`,
+          { timeoutSec: 15 },
+        );
+        if (result.exitCode !== 0) {
+          const reasons: Record<number, string> = {
+            6: `could not resolve ${new URL(endpoint.url).hostname}`,
+            7: 'could not connect',
+            28: 'no answer in 10 s',
+            35: 'TLS handshake failed',
+            60: 'TLS certificate verification failed',
+          };
+          const reason =
+            reasons[result.exitCode] ??
+            (result.stderr.trim().replace(/^curl: \(\d+\)\s*/, '') ||
+              `curl exit ${result.exitCode}`);
+          const advice =
+            result.exitCode === 6
+              ? 'Names only your network knows (a LAN, mDNS .local or Tailscale MagicDNS name) may not resolve inside the sandbox: use its IP address instead, and check the sandbox can reach that address.'
+              : result.exitCode === 35 || result.exitCode === 60
+                ? 'Use a certificate from a publicly trusted CA, or plain HTTP on your network, then try again.'
+                : 'Check that the server is running, listens on an address other than 127.0.0.1, and that no firewall blocks the sandbox, then try again.';
+          throw new AgentEndpointError(
+            `${plan.agent.name}'s ${endpoint.name} (${endpoint.source}) is ${endpoint.url}, and the sandbox can't reach it: ${reason}. ${advice}`,
+          );
+        }
+      }
       context.imageDigest = isDockerSandbox(box) ? await box.imageDigest() : '';
       log(
         `  Setting up ${repository ? 'your repository' : test.environment.slug} with ${plan.agent.name} ${plan.agent.version}…`,
@@ -147,14 +179,21 @@ export async function selfRun(input: SelfRunInput): Promise<SelfRunOutcome> {
     credentials.secrets,
   );
   // The run's messages were redacted with the credentials as they arrived; mask the secrets
-  // its artifacts show it wrote too, before a failed run's artifacts are dropped.
+  // its artifacts show it wrote too. A failed run's artifacts are dropped once they say why the
+  // agent stopped.
   const messages = {
     error: run.error && redact(run.error),
     agentTail: run.agentTail && redact(run.agentTail),
     destroyError: run.destroyError && redact(run.destroyError),
   };
   if (run.status !== 'ok')
-    return { runId, run: { ...run, ...messages, artifacts: {} }, bundle: null };
+    return {
+      runId,
+      run: { ...run, ...messages, artifacts: {} },
+      bundle: null,
+      agentError:
+        run.failedStage === 'agent' ? agentLastWords(artifacts, redact) : [],
+    };
   const bundle = await writeBundle({
     outDir: input.outDir,
     manifest: {
@@ -198,7 +237,12 @@ export async function selfRun(input: SelfRunInput): Promise<SelfRunOutcome> {
     artifacts,
     counts,
   });
-  return { runId, run: { ...run, ...messages, artifacts }, bundle };
+  return {
+    runId,
+    run: { ...run, ...messages, artifacts },
+    bundle,
+    agentError: [],
+  };
 }
 
 /**

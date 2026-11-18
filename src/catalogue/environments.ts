@@ -517,6 +517,11 @@ export function isRetiredEnvironment(slug: string): boolean {
   return RETIRED_ENVIRONMENT_SLUGS.includes(slug);
 }
 
+/** Every stack a new setup may name, including category-only stacks, in catalogue order. */
+export function activeEnvironments(): EnvironmentDefinition[] {
+  return ENVIRONMENTS.filter((env) => !isRetiredEnvironment(env.slug));
+}
+
 /**
  * Whether a new setup, a clone and a category's default test tick the project `slug`: it is
  * in the catalogue, not offered unticked, and not retired.
@@ -551,9 +556,8 @@ export function environmentRunsIn(slug: string, categorySlug: string): boolean {
  * catalogue` lists them, and a setup naming another is refused with them.
  */
 export function setupEnvironments(runsIn: string): EnvironmentDefinition[] {
-  return ENVIRONMENTS.filter(
-    (env) =>
-      !isRetiredEnvironment(env.slug) && environmentRunsIn(env.slug, runsIn),
+  return activeEnvironments().filter((env) =>
+    environmentRunsIn(env.slug, runsIn),
   );
 }
 
@@ -590,12 +594,11 @@ export function boardEnvironments(
 ): EnvironmentDefinition[] {
   return [
     ...categoryEnvironments(categorySlug),
-    ...ENVIRONMENTS.filter(
+    ...activeEnvironments().filter(
       (env) =>
         env.context &&
         !isSelectedByDefault(env.slug) &&
-        environmentRunsIn(env.slug, categorySlug) &&
-        !isRetiredEnvironment(env.slug),
+        environmentRunsIn(env.slug, categorySlug),
     ),
   ];
 }

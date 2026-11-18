@@ -45,6 +45,10 @@ export function pushRequest(
   repositoryStacks?: string[],
 ): PushRequest {
   const from = file.from ? findCategoryRequests(file.from) : undefined;
+  const linkedCopy =
+    current?.kind === 'copy' && current.source_category_slug === from?.slug
+      ? current
+      : null;
   const runsIn = from?.slug ?? 'job-';
   const tools = [
     ...(file.tools?.own !== undefined ? [file.tools.own] : []),
@@ -94,12 +98,13 @@ export function pushRequest(
           `${shown}: ${field}: ${ref.key} is a catalogue tool. Use the key alone (${ref.key}), so pull and push keep the same tool.`,
         );
   }
+  // A linked copy's setup save rejects tools it doesn't hold, so an unheld catalogue tool uses the job route.
   const writesCopy =
     from &&
     tools.some((ref) =>
       typeof ref === 'string'
-        ? !CATEGORY_TOOLS[from.slug]?.includes(ref) &&
-          !current?.tools.some((row) => row.tool_key === ref)
+        ? !current?.tools.some((row) => row.tool_key === ref) &&
+          (linkedCopy !== null || !CATEGORY_TOOLS[from.slug]?.includes(ref))
         : !heldAsWritten(ref, current),
     );
   if (writesCopy && current?.kind === 'category')
@@ -110,7 +115,8 @@ export function pushRequest(
     return {
       route: 'setup',
       body: {
-        category_id: categoryId(list, from.slug, shown),
+        category_id:
+          linkedCopy?.category_id ?? categoryId(list, from.slug, shown),
         tool_key: file.tools?.own === undefined ? null : key(file.tools.own),
         competitor_tool_keys: (file.tools?.competitors ?? []).map(key),
         ...setupRequests(file, current, from),
@@ -139,7 +145,9 @@ export function pushRequest(
     route: 'job',
     body: {
       job: from ? (current?.name ?? from.name) : file.job,
-      source_category_id: from ? categoryId(list, from.slug, shown) : null,
+      source_category_id: from
+        ? (linkedCopy?.source_category_id ?? categoryId(list, from.slug, shown))
+        : null,
       requests: copyRequests ?? {
         add: file.requests?.add,
         recommend,

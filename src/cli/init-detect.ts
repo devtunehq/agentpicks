@@ -1,6 +1,6 @@
 /**
  * ABOUTME: What `agentpicks init` reads from the customer's repository for its defaults: the stacks
- * its manifests and lockfiles name, whether it is a git repository (so `repo: .`), the customer's
+ * its manifests and lockfiles name, whether it has a git commit (so `repo: .`), the customer's
  * own tool from the package name and git remote matched against the catalogue's tool keys, and the
  * agents installed and signed in here, found as `run` finds them.
  */
@@ -16,20 +16,23 @@ import { planAgent } from './agent-plan';
 import { resolveCredentials } from './credentials';
 import { discoverAgents } from './discover';
 import {
+  AgentEndpointError,
   AgentModelError,
   KeychainLoginError,
   LoginExpiringError,
   MissingCredentialsError,
 } from './errors';
 import type { HostIo } from './host';
-import { repositoryRemote } from './repository';
+import { repositoryHasCommit, repositoryRemote } from './repository';
 import { SELF_RUN_AGENTS } from './self-run-agents';
 
 export interface DetectedRepository {
   /** The repository root a setup file is written under. */
   root: string;
-  /** Whether `root` is a git repository, so a setup can test it with `repo: .`. */
+  /** Whether `root` is a git repository. */
   git: boolean;
+  /** Whether HEAD resolves to a commit, so a setup can default to `repo: .`. */
+  hasCommit: boolean;
   /** The catalogue stacks the repository's frameworks match, in catalogue order. */
   stacks: string[];
   /** The files the stacks were read from, relative to the root. */
@@ -81,6 +84,7 @@ export function detectRepository(cwd: string, io: HostIo): DetectedRepository {
   return {
     root,
     git,
+    hasCommit: git && repositoryHasCommit(root),
     ...detectStacks(root),
     packageName: fullName || null,
     tool: matchTool(fullName, git ? repositoryRemote(root) : null),
@@ -190,6 +194,7 @@ function matchTool(
 
 /** Why `run` would refuse an installed agent before its first container. */
 const CREDENTIAL_REFUSALS = [
+  AgentEndpointError,
   AgentModelError,
   KeychainLoginError,
   LoginExpiringError,

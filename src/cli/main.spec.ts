@@ -551,6 +551,88 @@ describe('agentpicks run', () => {
       expect(readdirSync(cwd)).toEqual([]);
     });
 
+    it('prints why a failed agent stopped: the error its transcript names, else its stderr, else its last event', async () => {
+      const failed = (artifacts: Record<string, string>) =>
+        fakeProvider({
+          artifacts: {
+            ...ARTIFACTS,
+            ...artifacts,
+            'meta.json': JSON.stringify({ exitCode: 1, wallSec: 12.5 }),
+            'earlystop.json':
+              '{"reason":"none","triggerSec":0,"graceSec":0,"killed":false}',
+          },
+        }).provider;
+      const runOnce = async (artifacts: Record<string, string>) => {
+        const io = fakeHost({
+          commands: CLAUDE,
+          env: { ANTHROPIC_API_KEY: KEY },
+        });
+        const ctx = context(io, failed(artifacts), cwd);
+        await main(
+          ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+          ctx,
+        );
+        const at = ctx.lines.findIndex((line) =>
+          line.startsWith('  Failed at agent'),
+        );
+        const end = ctx.lines.indexOf('  No bundle was written for this run.');
+        return ctx.lines.slice(at + 1, end);
+      };
+      expect(
+        await runOnce({
+          'agent.err': [
+            'one',
+            'two',
+            '',
+            'three',
+            'four',
+            'five',
+            `six ${'x'.repeat(400)}`,
+          ].join('\n'),
+        }),
+      ).toEqual([
+        '  The agent’s last error output:',
+        '    two',
+        '    three',
+        '    four',
+        '    five',
+        `    six ${'x'.repeat(296)}…`,
+      ]);
+      expect(
+        await runOnce({
+          'agent.err': '\n',
+          'transcript.jsonl': `{"type":"init"}\n{"type":"result","is_error":true,"result":"API Error: 529 overloaded ${KEY}"}\n`,
+        }),
+      ).toEqual([
+        '  The agent’s last error:',
+        '    API Error: 529 overloaded [redacted]',
+      ]);
+      const unicodeEscaped = Array.from(
+        KEY,
+        (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`,
+      ).join('');
+      expect(
+        await runOnce({
+          'transcript.jsonl': `{"type":"result","is_error":true,"result":"rejected ${unicodeEscaped}"}\n`,
+        }),
+      ).toEqual(['  The agent’s last error:', '    rejected [redacted]']);
+      expect(
+        await runOnce({
+          'transcript.jsonl':
+            '{"type":"turn.failed","error":{"message":"stream disconnected"}}\n',
+        }),
+      ).toEqual(['  The agent’s last error:', '    stream disconnected']);
+      expect(
+        await runOnce({
+          'transcript.jsonl':
+            '{"type":"result","is_error":false,"result":"done"}\n',
+        }),
+      ).toEqual([
+        '  The agent’s last transcript event:',
+        '    {"type":"result","is_error":false,"result":"done"}',
+      ]);
+    });
+
     it.each([
       [0, false, 'an agent that finished'],
       [143, true, 'an agent the early stop killed'],

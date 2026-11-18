@@ -378,6 +378,24 @@ export function repositoryRemote(root: string): string | null {
   }
 }
 
+/** Whether HEAD names a commit that can be read locally, for init's repository default. */
+export function repositoryHasCommit(root: string): boolean {
+  try {
+    const git = hostGit(findGitDir(resolve(root)));
+    refusePartialCloneOnOldGit(git, root);
+    resolveCommit(git, root, undefined);
+    return true;
+  } catch (error) {
+    if (
+      error instanceof NotARepositoryError ||
+      error instanceof UnsupportedGitError ||
+      error instanceof UnknownCommitError
+    )
+      return false;
+    throw error;
+  }
+}
+
 function readRemoteUrl(git: Git): string | null {
   const remotes = git(['remote']).stdout.toString().split('\n').filter(Boolean);
   const remote = remotes.includes('origin') ? 'origin' : remotes[0];

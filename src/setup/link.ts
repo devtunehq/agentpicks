@@ -10,11 +10,7 @@ import { stringify } from 'yaml';
 
 import { findCategoryRequests } from '../catalogue/categories';
 import { CATEGORY_TOOLS } from '../catalogue/category-tools.generated';
-import {
-  ENVIRONMENTS,
-  environmentRunsIn,
-  isRetiredEnvironment,
-} from '../catalogue/environments';
+import { setupEnvironments } from '../catalogue/environments';
 import { PROMPT_INTENTS } from '../catalogue/prompt-intents';
 import type { DevtuneSetup } from '../cli/devtune-setups';
 import { SELF_RUN_AGENTS } from '../cli/self-run-agents';
@@ -69,11 +65,7 @@ const fileAgent = (kind: string) =>
 
 /** A stack this version of agentpicks can name in a setup that runs in `runsIn`. */
 export function nameableStack(slug: string, runsIn: string) {
-  return (
-    ENVIRONMENTS.some((env) => env.slug === slug) &&
-    !isRetiredEnvironment(slug) &&
-    environmentRunsIn(slug, runsIn)
-  );
+  return setupEnvironments(runsIn).some((env) => env.slug === slug);
 }
 
 /** The longest name a DevTune setup's name gives it, short enough to type and to fit `list`'s table. */
