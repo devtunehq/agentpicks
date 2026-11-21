@@ -78,6 +78,8 @@ interface FakeRun {
   artifacts?: Record<string, string>;
   /** The egress lookup's exec rejects, as a docker error does. */
   egressRejects?: boolean;
+  /** The egress lookup's curl exits with this code, as `curl -f` does on a 404. */
+  egressExit?: number;
   /** The agent's exec rejects with this message. */
   agentRejects?: string;
 }
@@ -91,8 +93,14 @@ function fakeProvider(run: FakeRun = {}) {
     id: 'fake-container',
     async exec(command, options) {
       execs.push({ command, options });
-      if (command.includes('api.ipify.org')) {
+      if (command.includes('/api/public/egress-ip')) {
         if (run.egressRejects) throw new Error('docker exec failed');
+        if (run.egressExit)
+          return {
+            exitCode: run.egressExit,
+            stdout: '',
+            stderr: 'curl: (22) The requested URL returned error: 404',
+          };
         return { exitCode: 0, stdout: '203.0.113.7\n', stderr: '' };
       }
       if (command.includes('run-agent.sh') && run.agentRejects)
@@ -387,6 +395,80 @@ describe('agentpicks run', () => {
       ),
     );
     expect(manifest.sandbox.egressIp).toBeNull();
+  });
+
+  it('records no egress IP when DevTune answers the lookup with an error status', async () => {
+    const io = fakeHost({ commands: CLAUDE, env: { ANTHROPIC_API_KEY: KEY } });
+    const fake = fakeProvider({ artifacts: ARTIFACTS, egressExit: 22 });
+    const ctx = context(io, fake.provider, cwd);
+    expect(
+      await main(
+        ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+        ctx,
+      ),
+    ).toBe(0);
+    const [runId] = readdirSync(join(cwd, 'agentpicks-runs'));
+    const manifest = bundleManifestSchema.parse(
+      JSON.parse(
+        readFileSync(
+          join(cwd, 'agentpicks-runs', runId!, 'manifest.json'),
+          'utf8',
+        ),
+      ),
+    );
+    expect(manifest.sandbox.egressIp).toBeNull();
+  });
+
+  it('records no egress IP, and still completes a local run, when DEVTUNE_API_BASE_URL is unusable', async () => {
+    const io = fakeHost({
+      commands: CLAUDE,
+      env: { ANTHROPIC_API_KEY: KEY, DEVTUNE_API_BASE_URL: 'not-a-url' },
+    });
+    const fake = fakeProvider({ artifacts: ARTIFACTS });
+    const ctx = context(io, fake.provider, cwd);
+    expect(
+      await main(
+        ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+        ctx,
+      ),
+    ).toBe(0);
+    expect(ctx.errors).toEqual([]);
+    expect(
+      fake.execs.filter((exec) => exec.command.includes('egress-ip')),
+    ).toEqual([]);
+    const [runId] = readdirSync(join(cwd, 'agentpicks-runs'));
+    const manifest = bundleManifestSchema.parse(
+      JSON.parse(
+        readFileSync(
+          join(cwd, 'agentpicks-runs', runId!, 'manifest.json'),
+          'utf8',
+        ),
+      ),
+    );
+    expect(manifest.sandbox.egressIp).toBeNull();
+  });
+
+  it('reads the egress IP from DevTune at the API root’s origin, which DEVTUNE_API_BASE_URL moves', async () => {
+    const lookups = async (env: Record<string, string>) => {
+      const fake = fakeProvider({ artifacts: ARTIFACTS });
+      const io = fakeHost({
+        commands: CLAUDE,
+        env: { ANTHROPIC_API_KEY: KEY, ...env },
+      });
+      await main(
+        ['run', '--no-upload', '--category', 'ci', '--stack', 'nextjs'],
+        context(io, fake.provider, cwd),
+      );
+      return fake.execs
+        .map((exec) => exec.command)
+        .filter((command) => command.includes('egress-ip'));
+    };
+    expect(await lookups({})).toEqual([
+      "curl -fsS --max-time 10 'https://devtune.ai/api/public/egress-ip'",
+    ]);
+    expect(await lookups({ DEVTUNE_API_BASE_URL: TARGET.baseUrl })).toEqual([
+      "curl -fsS --max-time 10 'https://devtune.test/api/public/egress-ip'",
+    ]);
   });
 
   it('masks a secret the agent wrote in a failed run’s error, before its artifacts are dropped', async () => {

@@ -48,6 +48,7 @@ import {
   loginSaved,
   signUpUrl,
   stopRenewing,
+  usableApiBaseUrl,
   type DevtuneTarget,
 } from './devtune-login';
 import { chooseAgent } from './discover';
@@ -76,7 +77,7 @@ import { pullCommand } from './pull-command';
 import { pushCommand } from './push-command';
 import { describeRepository, readRepository } from './repository';
 import { resultsCommand } from './results';
-import { selfRun } from './self-run';
+import { egressIpUrl, selfRun } from './self-run';
 import {
   devtuneRunSetup,
   heldTools,
@@ -464,6 +465,8 @@ async function runPlan(
       ? undefined
       : readRepository(given.repo, given.ref);
   const target = given.upload ? devtuneTarget(ctx.io) : null;
+  // Uploads already refused an unusable DEVTUNE_API_BASE_URL; a local run just records no egress IP.
+  const egressIpLookup = egressIpUrl(usableApiBaseUrl(ctx.io.env));
   // DevTune keys a repository's series by its remote, and refuses an upload without one.
   if (target && repository && repository.remoteUrl === null)
     throw new RepositoryRemoteError(
@@ -573,6 +576,7 @@ async function runPlan(
           host: { os: ctx.io.platform, arch: ctx.io.arch },
           platform,
           log: ctx.out,
+          egressIpUrl: egressIpLookup,
         });
         for (const line of describeOutcome(outcome)) ctx.out(line);
         if (!outcome.bundle) continue;

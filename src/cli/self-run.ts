@@ -54,6 +54,8 @@ export interface SelfRunInput {
   platform: SandboxPlatform;
   /** Progress for the person running it. */
   log: (line: string) => void;
+  /** Where the container reads its egress IP, from egressIpUrl; null reads none. */
+  egressIpUrl: string | null;
 }
 
 export interface SelfRunOutcome {
@@ -65,8 +67,13 @@ export interface SelfRunOutcome {
   agentError: string[];
 }
 
-/** Where the egress IP is read from: a single request whose only answer is the caller's address. */
-export const EGRESS_IP_URL = 'https://api.ipify.org';
+/**
+ * Where the egress IP is read from: DevTune's route whose only answer is the caller's address, at the origin of
+ * the API root (`usableApiBaseUrl`), so DEVTUNE_API_BASE_URL moves it too. Null with no usable API root.
+ */
+export function egressIpUrl(apiBaseUrl: string | null): string | null {
+  return apiBaseUrl && new URL('/api/public/egress-ip', apiBaseUrl).href;
+}
 
 export async function selfRun(input: SelfRunInput): Promise<SelfRunOutcome> {
   const { test, plan, credentials, repository, log } = input;
@@ -109,7 +116,7 @@ export async function selfRun(input: SelfRunInput): Promise<SelfRunOutcome> {
     // agent wrote is found by reading all of them; errors and output are redacted here.
     redact: (text, artifact) => (artifact ? text : redactMessage(text)),
     async afterUpload(box) {
-      context.egressIp = await readEgressIp(box);
+      context.egressIp = await readEgressIp(box, input.egressIpUrl);
       for (const endpoint of credentials.endpoints) {
         const result = await box.exec(
           `curl --noproxy '*' --globoff --head --silent --show-error --output /dev/null --max-time 10 --url ${shellQuote(new URL(endpoint.url).origin)}`,
@@ -246,12 +253,17 @@ export async function selfRun(input: SelfRunInput): Promise<SelfRunOutcome> {
 }
 
 /**
- * The container's public address, from one HTTPS request made inside it before setup; null when
- * it can't be read, which never fails the run.
+ * The container's public address, from one request to `url` made inside it before setup: a plain-text address,
+ * surrounding whitespace allowed. Null when it can't be read, an error status (a DevTune without the route answers
+ * 404) included, which never fails the run, and null without a request when there is no `url`.
  */
-export async function readEgressIp(box: Sandbox): Promise<string | null> {
+export async function readEgressIp(
+  box: Sandbox,
+  url: string | null,
+): Promise<string | null> {
+  if (!url) return null;
   try {
-    const r = await box.exec(`curl -fsS --max-time 10 ${EGRESS_IP_URL}`, {
+    const r = await box.exec(`curl -fsS --max-time 10 ${shellQuote(url)}`, {
       timeoutSec: 20,
     });
     const ip = r.stdout.trim();

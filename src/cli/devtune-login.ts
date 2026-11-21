@@ -129,13 +129,17 @@ export const AGENT_SETUP_URL =
  * token goes with every request.
  */
 export function apiBaseUrl(env: HostIo['env']): string {
-  const value = env.DEVTUNE_API_BASE_URL || DEFAULT_API_BASE_URL;
-  const root = apiRoot(value);
+  const root = usableApiBaseUrl(env);
   if (!root)
     throw new UsageError(
-      `DEVTUNE_API_BASE_URL must be an HTTPS address ending in /api/v2 (HTTP only on this machine), not ${value}.`,
+      `DEVTUNE_API_BASE_URL must be an HTTPS address ending in /api/v2 (HTTP only on this machine), not ${env.DEVTUNE_API_BASE_URL}.`,
     );
   return root;
+}
+
+/** apiBaseUrl, or null where it would refuse DEVTUNE_API_BASE_URL: for a lookup that a bad setting must not stop. */
+export function usableApiBaseUrl(env: HostIo['env']): string | null {
+  return apiRoot(env.DEVTUNE_API_BASE_URL || DEFAULT_API_BASE_URL);
 }
 
 /** The saved login in `text`, refused by name when it can't be read. */

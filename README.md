@@ -290,7 +290,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: npm install -g @anthropic-ai/claude-code@2.1.323
-      - uses: devtunehq/agentpicks@v0.4.9
+      - uses: devtunehq/agentpicks@v0.4.10
         with:
           setup: agentpicks/error-tracking.yaml
           agent: claude-code
@@ -304,7 +304,7 @@ jobs:
 
 Use a Linux runner: `ubuntu-latest` has Docker and Node.js 20 or later. Without Docker, `run` refuses; without Node.js 20 or later, the action does. The action uses the runner's Node.js and doesn't change it for later steps.
 
-Pin a release tag, such as `v0.4.9`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
+Pin a release tag, such as `v0.4.10`. The action runs the `@devtune/agentpicks` version in the `package.json` of its ref, so a tag runs the same CLI every time. A branch moves to each new version when the mirror syncs, and fails while that version isn't on npm.
 
 | Input | Passed as |
 |---|---|
@@ -345,7 +345,7 @@ Install Docker, Node.js 20 or later and the agent, set `DEVTUNE_API_KEY`, `DEVTU
 
 ```sh
 npm install -g @anthropic-ai/claude-code@2.1.323
-npx --yes @devtune/agentpicks@0.4.9 run error-tracking --agent claude-code
+npx --yes @devtune/agentpicks@0.4.10 run error-tracking --agent claude-code
 ```
 
 ## The bundle
@@ -358,7 +358,7 @@ redactions.json    what redaction removed, per artifact
 artifacts/         what the run captured, already redacted
 ```
 
-`manifest.json` holds `bundleVersion` (1), the generated `runId`, the runner's version, the agent's kind, version and model, the host's OS and architecture, the image digest, the container's egress IP, the stack with its starter and lock digest or the repository with its remote address (`origin`, or the first remote) as host and path alone, without user, password, query, fragment or `transport::` prefix, or `null` with no remote, a local path, or an address it can't read with confidence, and its full commit id, the category (`setup:<name>` for a custom setup), request intent (`add`) and exact prompt, start and end times, and each artifact's size and SHA-256. An artifact that analysis doesn't read and that is over DevTune's upload limit (50 MiB) is trimmed to whole lines within it, and the manifest records its size before and after under `truncation`: `mitm.log` and `agent.err` keep their end, and the rest keep their start. The artifacts analysis reads (the transcript, `requests.jsonl`, the diff and the source files, and the package and manifest files before and after) are never trimmed, so a result is never drawn from part of a run; over the limit, `agentpicks upload` refuses the bundle and names the limit. The egress IP is read inside the container from `https://api.ipify.org` before setup; when it can't be read it is `null`.
+`manifest.json` holds `bundleVersion` (1), the generated `runId`, the runner's version, the agent's kind, version and model, the host's OS and architecture, the image digest, the container's egress IP, the stack with its starter and lock digest or the repository with its remote address (`origin`, or the first remote) as host and path alone, without user, password, query, fragment or `transport::` prefix, or `null` with no remote, a local path, or an address it can't read with confidence, and its full commit id, the category (`setup:<name>` for a custom setup), request intent (`add`) and exact prompt, start and end times, and each artifact's size and SHA-256. An artifact that analysis doesn't read and that is over DevTune's upload limit (50 MiB) is trimmed to whole lines within it, and the manifest records its size before and after under `truncation`: `mitm.log` and `agent.err` keep their end, and the rest keep their start. The artifacts analysis reads (the transcript, `requests.jsonl`, the diff and the source files, and the package and manifest files before and after) are never trimmed, so a result is never drawn from part of a run; over the limit, `agentpicks upload` refuses the bundle and names the limit. The egress IP is read inside the container before setup from DevTune's `/api/public/egress-ip`, at the origin of `DEVTUNE_API_BASE_URL` (`https://devtune.ai` by default), which answers with the caller's address as plain text; when it can't be read it is `null`.
 
 The artifacts are those a DevTune managed run captures: `transcript.jsonl`, `diff.patch`, `requests.jsonl` (every request the agent's traffic made through the logging proxy), `llm-usage.jsonl`, `deps.txt`, the manifests and lockfiles before and after, `meta.json` (the agent's exit code) and `earlystop.json`, among others.
 

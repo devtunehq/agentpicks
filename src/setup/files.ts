@@ -24,10 +24,17 @@ export const SETUPS_DIR = 'agentpicks';
 
 const EXTENSIONS = ['.yaml', '.yml'];
 
-/** The nearest directory at or above `dir` holding `.git`, or null outside a repository. */
+/**
+ * The nearest directory at or above `dir` holding a repository's `.git`, or null outside a
+ * repository. That `.git` is a file (a linked worktree or submodule) or a folder with `HEAD`. Git
+ * skips an empty `.git` folder, such as a sandbox's leftover mount point in /tmp, and so does this.
+ */
 export function gitRoot(dir: string): string | null {
   for (let at = resolve(dir); ; at = dirname(at)) {
-    if (existsSync(join(at, '.git'))) return at;
+    const git = statSync(join(at, '.git'), { throwIfNoEntry: false });
+    if (git?.isFile() || (git && existsSync(join(at, '.git', 'HEAD')))) {
+      return at;
+    }
     if (dirname(at) === at) return null;
   }
 }

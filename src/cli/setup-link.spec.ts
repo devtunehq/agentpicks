@@ -190,7 +190,7 @@ function fakeProvider(): SandboxProvider {
   const box: Sandbox & { imageDigest(): Promise<string> } = {
     id: 'fake-container',
     async exec(command) {
-      if (command.includes('api.ipify.org'))
+      if (command.includes('/api/public/egress-ip'))
         return { exitCode: 0, stdout: '203.0.113.7\n', stderr: '' };
       return { exitCode: 0, stdout: '', stderr: '' };
     },
@@ -240,6 +240,7 @@ let repo: string;
 beforeEach(() => {
   repo = mkdtempSync(join(tmpdir(), 'agentpicks-link-'));
   mkdirSync(join(repo, '.git'));
+  writeFileSync(join(repo, '.git', 'HEAD'), 'ref: refs/heads/main\n');
   mkdirSync(join(repo, 'agentpicks'));
 });
 afterEach(() => {
