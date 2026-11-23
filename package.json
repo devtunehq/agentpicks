@@ -1,6 +1,6 @@
 {
   "name": "@devtune/agentpicks",
-  "version": "0.4.10",
+  "version": "0.4.11",
   "description": "The open Agent Picks runner: the agentpicks CLI, which tests the coding agents installed on your machine in fresh Docker containers, and the sandbox code DevTune runs its managed tests on",
   "license": "Apache-2.0",
   "engines": {
@@ -8,8 +8,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/devtunehq/devtuneai.git",
-    "directory": "packages/agentpicks"
+    "url": "git+https://github.com/devtunehq/agentpicks.git"
+  },
+  "homepage": "https://github.com/devtunehq/agentpicks#readme",
+  "bugs": {
+    "url": "https://github.com/devtunehq/agentpicks/issues"
   },
   "bin": {
     "agentpicks": "./dist/cli.js"
